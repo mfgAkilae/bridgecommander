@@ -108,6 +108,8 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
     }
     if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
         orient_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
+    if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.velocityExtrapolation)
+        velo_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
     if (ai && trace_active())
         trace_update(ship, ai, before, ms);
 }
@@ -117,7 +119,7 @@ void lead_install(void)
     static const BYTE prologue[7] = {0x6a, 0xff, 0x68, 0xd8, 0xb9, 0x87, 0x00}; /* push -1; push 0x87b9d8 */
     BYTE jmp[5];
     LONG rel;
-    if (!g_cfg.latencyComp && g_cfg.traceSec <= 0 && g_cfg.orientationCorrection != 2)
+    if (!g_cfg.latencyComp && g_cfg.traceSec <= 0 && g_cfg.orientationCorrection != 2 && !g_cfg.velocityExtrapolation)
         return;
     if (memcmp((void *)ADDR_SHIP_READER, prologue, 7) != 0) {
         logf("PATCH latency compensation: prologue differs, NOT applied");

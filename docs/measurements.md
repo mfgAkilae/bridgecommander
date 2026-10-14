@@ -216,3 +216,32 @@ extrapolation along the nose, straight or curved, is wrong in turns; the proxy's
 ship class) reproduces the drift as long as its orientation is left alone. A better position
 extrapolation would follow the velocity estimated from successive received positions instead of the
 nose.
+
+## Issue #11: extrapolation along the estimated velocity
+
+Instead of the reported nose × speed, the target follows the velocity estimated from successive
+received positions and their sender times (`VelocityExtrapolation`, `src/velo.c`), straight (1) or
+along the estimated turn of the velocity (2). In a first version the magnitude also came from the
+positions; it scattered by about ±30 % (|v| / reported speed: 5th percentile 0.69, 95th 1.27), while
+the direction was steady (median 1.1° between consecutive estimates, 50 ms apart). The hybrid version
+takes the direction from the positions and the magnitude from the reported speed. Orientation
+correction: threshold variant in all runs. Mean error / 95th percentile:
+
+| Run | threshold only | velocity, straight | velocity, arc | hybrid, straight | hybrid, arc |
+|---|---|---|---|---|---|
+| 2 players 60 ms, host ship | 0.35 / 0.45 | 0.60 / 1.00 | 0.52 / 0.69 | 0.57 / 0.72 | 0.55 / 0.71 |
+| 2 players 60 ms, client ship | 0.20 / 0.36 | 0.23 / 0.39 | 0.25 / 0.43 | 0.23 / 0.43 | 0.24 / 0.42 |
+| 2 players 150 ms, host ship | 0.30 / 0.53 | 0.61 / 0.83 | 0.56 / 0.75 | 0.65 / 0.83 | 0.60 / 0.77 |
+| 2 players 150 ms, client ship | 0.38 / 0.66 | 0.31 / 0.48 | 0.28 / 0.46 | 0.31 / 0.48 | 0.30 / 0.46 |
+| 6 players: client views host | 0.37–0.38 / 0.45–0.68 | 0.52–0.60 / 0.77–0.81 | 0.52–0.53 / 0.71–0.78 | 0.47–0.56 / 0.71–0.85 | 0.53–0.55 / 0.69–0.71 |
+| 6 players: host views client | 0.25–0.27 / 0.41–0.50 | 0.33–0.34 / 0.56–0.58 | 0.33–0.36 / 0.54–0.56 | 0.33–0.38 / 0.56–0.58 | 0.33–0.34 / 0.52–0.55 |
+| 6 players: client views client | 0.44–0.51 / 0.80–1.11 | 0.46–0.47 / 0.74–0.75 | 0.48 / 0.73–0.75 | 0.46–0.49 / 0.70–0.74 | 0.44–0.45 / 0.67–0.70 |
+
+Backward steps stayed at or below 1.1 % in all variants.
+
+The velocity-based target only helps where the host relays a client's ship to the other clients
+(smaller 95th percentile) and the client ship at 150 ms in 2-player games. For ships whose state
+comes straight from their owner (the host's ship, and clients' ships as the host sees them) it is
+clearly worse. The velocity from position differences describes the past update interval and is
+smoothed, so in continuous turns it lags; the reported nose is the state at send time, and the proxy's
+own physics adds the drift of its ship class. Not enabled by default (`VelocityExtrapolation=0`).

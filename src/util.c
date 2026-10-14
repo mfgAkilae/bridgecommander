@@ -43,6 +43,7 @@ void config_load(void)
     g_cfg.smoothCorrection = ini_int(ini, "Fixes", "SmoothCorrection", 1);
     g_cfg.orientationCorrection = ini_int(ini, "Fixes", "OrientationCorrection", 1);
     g_cfg.arcExtrapolation = ini_int(ini, "Fixes", "ArcExtrapolation", 1);
+    g_cfg.velocityExtrapolation = ini_int(ini, "Fixes", "VelocityExtrapolation", 0);
     g_cfg.sendInterval = ini_int(ini, "Fixes", "StateUpdateIntervalMs", 50) / 1000.0f;
     g_cfg.retransmitMs = ini_int(ini, "Fixes", "ResendIntervalMs", 300);
     g_cfg.torpedoAuthority = ini_int(ini, "Fixes", "TorpedoHitAuthority", 1);

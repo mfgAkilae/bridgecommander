@@ -59,6 +59,8 @@ typedef void(__fastcall *PFN_SetPos)(void *obj, void *edx, float *pos);
 typedef float *(__fastcall *PFN_GetVecOut)(void *obj, void *edx, float *out);
 
 static unsigned long g_heldBack; /* frames in which a backward correction was limited */
+static float g_veloDir[3];      /* direction of flight from velo.c for this correction call */
+static int g_veloDirValid;
 
 /* Smooth correction (SmoothCorrection=1): the stock code moves the proxy straight
  * towards the target. When the proxy is ahead of the target (extrapolation overshot,
@@ -75,7 +77,9 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
     float speed = *(float *)(ai + 0x54);
     float e[3], m[3], n, along, k, back, newpos[3];
     int i;
-    if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && orient_predict(ai, pf, pu))
+    if (g_veloDirValid)
+        fwd = g_veloDir; /* estimated direction of flight (velocity) */
+    else if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && orient_predict(ai, pf, pu))
         fwd = pf; /* direction of flight now, not one latency ago */
     for (i = 0; i < 3; i++)
         e[i] = target[i] - pos[i];
@@ -90,7 +94,7 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
         return;
     }
     for (i = 0; i < 3; i++) /* direction of flight */
-        m[i] = fwd[i] / n * (speed < 0.0f ? -1.0f : 1.0f);
+        m[i] = fwd[i] / n * (speed < 0.0f && !g_veloDirValid ? -1.0f : 1.0f);
     along = e[0] * m[0] + e[1] * m[1] + e[2] * m[2];
     back = along * k; /* along-track move this frame (negative = backwards) */
     if (back < 0.0f) {
@@ -180,7 +184,16 @@ static void align_orientation(BYTE *ai, void *ship, float dt)
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
-    if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && ship) {
+    g_veloDirValid = 0;
+    if (g_cfg.velocityExtrapolation && ship) {
+        /* replace NetworkAI's target (reported nose * speed) with the extrapolation
+         * along the velocity estimated from received positions (velo.c) */
+        float t[3];
+        if (velo_target((BYTE *)self, t, g_veloDir)) {
+            memcpy((BYTE *)self + 0x30, t, 12);
+            g_veloDirValid = g_veloDir[0] != 0.0f || g_veloDir[1] != 0.0f || g_veloDir[2] != 0.0f;
+        }
+    } else if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && ship) {
         /* replace NetworkAI's straight-line target with the arc extrapolation */
         float t[3];
         if (orient_target((BYTE *)self, t))
