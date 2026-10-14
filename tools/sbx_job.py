@@ -22,17 +22,22 @@ def main():
     ap.add_argument('--jitter', type=int, default=0)
     ap.add_argument('--loss', type=int, default=0)
     ap.add_argument('--species', default='1,2')
+    ap.add_argument('--clients', type=int, default=1)
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--nowait', action='store_true')
     ap.add_argument('--nodll', action='store_true')
     ap.add_argument('--set', action='append', default=[])
     ap.add_argument('--set-host', action='append', default=[])
     ap.add_argument('--set-client', action='append', default=[])
+    ap.add_argument('--test-set', action='append', default=[])
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
     ap.add_argument('--steps', default='', help='JSON file with program steps instead of a game run (see sbx_runner)')
     a = ap.parse_args()
-    alive = os.path.join(SBX, 'agent_alive.txt')
-    if not os.path.exists(alive) or time.time() - os.path.getmtime(alive) > 30:
+    # the agent touches agent_alive.txt only while idle; during a job agent_status.txt changes
+    def age(f):
+        p = os.path.join(SBX, f)
+        return time.time() - os.path.getmtime(p) if os.path.exists(p) else 1e9
+    if age('agent_alive.txt') > 30 and age('agent_status.txt') > 600:
         sys.exit('sandbox agent not running (start bc-test.wsb)')
     job = {k: v for k, v in vars(a).items() if k not in ('nowait', 'shots', 'steps')}
     job['shots'] = [int(x) for x in a.shots.split(',') if x]

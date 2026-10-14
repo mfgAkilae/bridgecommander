@@ -74,8 +74,8 @@ static void __fastcall hk_SendStateUpdates(void *self, void *edx)
     }
     if (g_cfg.statsIntervalSec > 0 && t - g_statT >= g_cfg.statsIntervalSec) {
         if (g_statT > 0)
-            logf("MP frames %.1f/s, state-update rounds %.1f/s", g_frames / (t - g_statT),
-                 g_sends / (t - g_statT));
+            logf("MP frames %.1f/s, state-update rounds %.1f/s, relayed client-ship writes %lu", g_frames / (t - g_statT),
+                 g_sends / (t - g_statT), relay_count());
         g_frames = g_sends = 0;
         g_statT = t;
     }
@@ -123,6 +123,12 @@ static void __fastcall hk_FrameTimer(void *self, void *edx)
                     "class _BcmpOut:\n"
                     "\tdef write(self, s):\n"
                     "\t\tbcmpdll.write(s)\n"
+                    /* game scripts may flush/close stdout; a missing method raises and
+                       opens the blocking Python debug console */
+                    "\tdef flush(self):\n"
+                    "\t\tpass\n"
+                    "\tdef close(self):\n"
+                    "\t\tpass\n"
                     "sys.stdout = _BcmpOut()\n"
                     "sys.stderr = sys.stdout\n"
                     "print 'bcmpdll: python output redirected'\n"

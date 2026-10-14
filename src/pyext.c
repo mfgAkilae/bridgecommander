@@ -132,14 +132,19 @@ static PyObject *__cdecl m_quit(PyObject *self, PyObject *args)
     return py_none();
 }
 
-/* bcmpdll.allowhit(torpedoObjID): let this torpedo hit ships on an MP client once */
+/* bcmpdll.allowhit(torpedoObjID, mode=0[, x, y, z]): let this torpedo hit ships on an
+ * MP client; x, y, z = replay start point (start of the hit-test segment) */
 static PyObject *__cdecl m_allowhit(PyObject *self, PyObject *args)
 {
     int id = 0, mode = 0;
+    float x = 1e30f, y = 0.0f, z = 0.0f; /* x stays 1e30 without a start point */
     (void)self;
-    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "i|i", &id, &mode))
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "i|ifff", &id, &mode, &x, &y, &z))
         return NULL;
-    torpedo_authorize_mode((DWORD)id, mode);
+    if (x < 1e29f)
+        torpedo_authorize_start((DWORD)id, mode, x, y, z);
+    else
+        torpedo_authorize_mode((DWORD)id, mode);
     return py_none();
 }
 

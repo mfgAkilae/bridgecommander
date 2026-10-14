@@ -45,6 +45,7 @@ void config_load(void)
     g_cfg.torpedoAuthority = ini_int(ini, "Fixes", "TorpedoHitAuthority", 1);
     g_cfg.latencyComp = ini_int(ini, "Fixes", "LatencyCompensation", 1);
     g_cfg.maxLeadMs = ini_int(ini, "Fixes", "MaxLatencyCompensationMs", 300);
+    g_cfg.hostRelay = ini_int(ini, "Fixes", "HostRelayReceivedState", 1);
     g_cfg.mpScript = ini_int(ini, "Fixes", "ScriptLayer", 1);
     if (!g_cfg.mpScript)
         g_cfg.torpedoAuthority = g_cfg.latencyComp = 0;

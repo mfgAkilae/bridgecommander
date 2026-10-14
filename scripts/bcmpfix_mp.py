@@ -35,7 +35,7 @@ g_iLastHitTorp = 0
 g_iLastHitTime = 0
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'expired': 0, 'retries': 0}
+g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0}
 g_iNextStats = 0
 
 
@@ -287,6 +287,7 @@ def ReceiveHit(kStream):
 	g_dStats['hits_recv'] = g_dStats['hits_recv'] + 1
 	pTarget = App.ShipClass_GetObjectByID(None, iTarget)
 	if not pTarget:
+		g_dStats['no_target'] = g_dStats['no_target'] + 1
 		return
 	pTorp = FindTorpedo(pTarget, iShooter, fX, fY, fZ)
 	if pTorp is None:
@@ -326,16 +327,20 @@ def ReplayApproach(pTorp, pTarget, lEntry):
 	fX = kC.GetX() + fRX * fDeep
 	fY = kC.GetY() + fRY * fDeep
 	fZ = kC.GetZ() + fRZ * fDeep
-	pTorp.SetTranslateXYZ(fX + fNX * fBack, fY + fNY * fBack, fZ + fNZ * fBack)
+	fSX = fX + fNX * fBack
+	fSY = fY + fNY * fBack
+	fSZ = fZ + fNZ * fBack
+	pTorp.SetTranslateXYZ(fSX, fSY, fSZ)
 	kNewV = App.TGPoint3()
 	kNewV.SetXYZ(-fNX * fSpeed, -fNY * fSpeed, -fNZ * fSpeed)
 	pTorp.SetVelocity(kNewV)
 	pTorp.UpdateNodeOnly()
-	# mode 1: host saw a shield hit, mode 2: hull hit - the DLL makes ours match
+	# mode 1: host saw a shield hit, mode 2: hull hit - the DLL makes ours match;
+	# the start point becomes the start of the hit-test segment
 	if lEntry[6]:
-		bcmpdll.allowhit(pTorp.GetObjID(), 2)
+		bcmpdll.allowhit(pTorp.GetObjID(), 2, fSX, fSY, fSZ)
 	else:
-		bcmpdll.allowhit(pTorp.GetObjID(), 1)
+		bcmpdll.allowhit(pTorp.GetObjID(), 1, fSX, fSY, fSZ)
 
 def ExpirePending():
 	# replays without a local hit get two more approaches; after that the
@@ -360,6 +365,8 @@ def ExpirePending():
 		if pTorp:
 			bcmpdll.retire(pTorp.this)
 			g_dStats['expired'] = g_dStats['expired'] + 1
+		else:
+			g_dStats['lost'] = g_dStats['lost'] + 1
 
 def FindTorpedo(pTarget, iShooter, fX, fY, fZ):
 	pSet = pTarget.GetContainingSet()
@@ -374,7 +381,9 @@ def FindTorpedo(pTarget, iShooter, fX, fY, fZ):
 	iGuard = 0
 	while iGuard < 1000:
 		pTorp = App.Torpedo_Cast(pObj)
-		if pTorp and pTorp.GetParentID() == iShooter:
+		# a torpedo that already replays another hit is taken: pulse weapons fire in
+		# pairs, and both reports would otherwise pick the same nearest copy
+		if pTorp and pTorp.GetParentID() == iShooter and not g_dPending.has_key(pTorp.GetObjID()):
 			kP = pTorp.GetWorldLocation()
 			fDX = kP.GetX() - fX
 			fDY = kP.GetY() - fY

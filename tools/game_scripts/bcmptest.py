@@ -37,7 +37,12 @@ def InitEnv():
 	g_sAI = Env('BCMP_AI', 'attack')
 	g_fLogEvery = string.atof(Env('BCMP_TLOG_INTERVAL', '0.1'))
 	g_fQuitAfter = string.atof(Env('BCMP_QUIT_AFTER', '0'))
-	Log('# role=%s name=%s start=%.3f' % (g_sRole, g_sName, Now()))
+	global g_iSeed
+	if g_sRole == 'host':
+		g_iSeed = string.atoi(Env('BCMP_SEED', '12345'))
+	else:
+		g_iSeed = string.atoi(Env('BCMP_SEED', '54321'))
+	Log('# role=%s name=%s start=%.3f seed=%d' % (g_sRole, g_sName, Now(), g_iSeed))
 
 g_sState = 'boot'
 g_fStateTime = 0.0
@@ -197,12 +202,11 @@ g_sManeuver = ''
 g_iNextVolley = 0
 g_iVolleyEnd = 0
 g_iTargetID = 0
+g_iTargetUntil = 0
 
 def Rand():
 	# Python 1.5 ints are 32 bit and do not promote, so use longs
 	global g_iSeed
-	if g_iSeed == 12345 and g_sRole == 'client':
-		g_iSeed = 54321
 	g_iSeed = (long(g_iSeed) * 1103515245L + 12345L) % 2147483648L
 	return float((g_iSeed / 65536L) % 32768L) / 32768.0
 
@@ -212,10 +216,31 @@ def MakePoint(fX, fY, fZ):
 	return kP
 
 def FindEnemy(pPlayer):
+	# keep the current target for 20 s, then switch to the nearest enemy
+	# (with one enemy this is always that ship)
+	global g_iTargetUntil
+	t = Now()
+	kP = pPlayer.GetWorldLocation()
+	pCur = None
+	pBest = None
+	fBest = 0.0
 	for (iID, pShip) in GetShips():
-		if pShip.GetObjID() != pPlayer.GetObjID() and not pShip.IsDead() and not pShip.IsDying():
-			return pShip
-	return None
+		if pShip.GetObjID() == pPlayer.GetObjID() or pShip.IsDead() or pShip.IsDying():
+			continue
+		if pShip.GetObjID() == g_iTargetID:
+			pCur = pShip
+		kE = pShip.GetWorldLocation()
+		fDX = kE.GetX() - kP.GetX()
+		fDY = kE.GetY() - kP.GetY()
+		fDZ = kE.GetZ() - kP.GetZ()
+		fD = fDX * fDX + fDY * fDY + fDZ * fDZ
+		if pBest is None or fD < fBest:
+			pBest = pShip
+			fBest = fD
+	if pCur is not None and t < g_iTargetUntil:
+		return pCur
+	g_iTargetUntil = t + 20000
+	return pBest
 
 def Pilot(pPlayer):
 	global g_iManeuverEnd, g_sManeuver, g_iNextVolley, g_iVolleyEnd, g_iTargetID

@@ -18,6 +18,7 @@ typedef struct Config {
     int torpedoAuthority;   /* MP clients show torpedo hits only when the host reports them */
     int latencyComp;        /* extrapolate remote ships by measured one-way latency */
     int maxLeadMs;          /* cap for latency compensation */
+    int hostRelay;          /* host writes client ships from the received state, not its proxy */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
     int qpcRebase;          /* game clock relative to process start, not boot */
@@ -71,9 +72,12 @@ int pyext_init(void);
 void torpedo_install(void);
 void torpedo_authorize(DWORD torpId);
 void torpedo_authorize_mode(DWORD torpId, int mode);
+void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z);
 int torpedo_force(void *torp, void *target);
 void torpedo_retire(void *torp);
 void torpedo_set_active(int on);
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed);
 void lead_install(void);
 void lead_set(DWORD objId, int ms);
+void relay_install(void);
+unsigned long relay_count(void);

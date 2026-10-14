@@ -18,14 +18,16 @@ IN_SANDBOX = os.environ.get('USERNAME', '').upper() == 'WDAGUTILITYACCOUNT'
 HOST_ADDR = '127.0.0.2'
 
 
+NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel']
+
 FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0, 'FixProxyFirstFrame': 0,
              'NoCorrectionDeadband': 0, 'CorrectionGainPercent': 100, 'StateUpdateIntervalMs': 100,
              'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'ResendIntervalMs': 1000, 'ScriptLayer': 0, 'TorpedoHitAuthority': 0,
-             'LatencyCompensation': 0, 'MaxFPS': 0}
+             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'MaxFPS': 0}
 FIXES_ON = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 1, 'FixDeltaBase': 1, 'FixProxyFirstFrame': 1,
             'NoCorrectionDeadband': 1, 'CorrectionGainPercent': 500, 'StateUpdateIntervalMs': 50,
             'TimerResolution1ms': 1, 'ClockFromProcessStart': 1, 'ResendIntervalMs': 300, 'ScriptLayer': 1, 'TorpedoHitAuthority': 1,
-            'LatencyCompensation': 1, 'MaxFPS': 0}
+            'LatencyCompensation': 1, 'HostRelayReceivedState': 1, 'MaxFPS': 0}
 
 
 def write_ini(path, fixes, rate, test):
@@ -39,7 +41,7 @@ def write_ini(path, fixes, rate, test):
              'WindowX=%d' % test['x'], 'WindowY=%d' % test['y'],
              'LatencyMs=%d' % test['lat'], 'JitterMs=%d' % test['jit'],
              'LossPerMille=%d' % test['loss'],
-             'PythonTick=Local.Tick', 'PythonTickMs=50',
+             'PythonTick=Local.Tick', 'PythonTickMs=50'] + list(test.get('tset') or []) + [
              '', '[Debug]', 'NetStatsSec=5', 'Verbose=1', '']
     open(path, 'w').write('\n'.join(lines))
 
@@ -53,11 +55,13 @@ def main():
     ap.add_argument('--latency', type=int, default=0)
     ap.add_argument('--jitter', type=int, default=0)
     ap.add_argument('--loss', type=int, default=0)
-    ap.add_argument('--species', default='1,2')
+    ap.add_argument('--species', default='1,2', help='comma separated, one per player (cycled)')
+    ap.add_argument('--clients', type=int, default=1, help='number of client instances (1-7)')
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--set', action='append', default=[], help='override a [Fixes] key, e.g. CorrectionGainPercent=300')
     ap.add_argument('--set-host', action='append', default=[], help='like --set, host only')
     ap.add_argument('--set-client', action='append', default=[], help='like --set, client only')
+    ap.add_argument('--test-set', action='append', default=[], help='extra [Test] line, e.g. PythonTickDelayMs=1500')
     a = ap.parse_args()
     if not IN_SANDBOX and os.environ.get('BCMP_ALLOW_HOST') != '1':
         sys.exit('refusing to start the game outside Windows Sandbox (set BCMP_ALLOW_HOST=1 to override)')
@@ -65,18 +69,25 @@ def main():
     os.makedirs(out, exist_ok=True)
     species = a.species.split(',')
     procs = []
-    if IN_SANDBOX:
-        roles = [('host', 'Alpha', 0, 0, species[0]), ('client', 'Bravo', 660, 0, species[1])]
-    else:
-        roles = [('host', 'Alpha', 2900, 650, species[0]), ('client', 'Bravo', 3580, 650, species[1])]
+    # (role, name, bind address, seed); each client gets its own loopback IP because
+    # every instance binds UDP 22101; the first client keeps the 2-player names
+    roles = [('host', NAMES[0], HOST_ADDR, 12345)]
+    for k in range(1, a.clients + 1):
+        roles.append(('client' if k == 1 else 'client%d' % k, NAMES[k],
+                      '127.0.0.1' if k == 1 else '127.0.0.%d' % (k + 2), 54321 if k == 1 else 54321 + 7919 * k))
     if a.solo:
         roles = roles[:1]
-    for role, name, x, y, sp in roles:
+    stagger = 3 if len(roles) > 2 else 0
+    for i, (role, name, bind, seed) in enumerate(roles):
+        sp = species[i % len(species)]
+        if IN_SANDBOX:
+            x, y = (i % 3) * 660, (i // 3) * 520
+        else:
+            x, y = 2900 + (i % 2) * 680, 650 + (i // 2) * 200
         ini = os.path.join(out, 'bcmpfix_%s.ini' % role)
         write_ini(ini, a.fixes, a.rate,
-                  {'x': x, 'y': y, 'lat': a.latency, 'jit': a.jitter, 'loss': a.loss,
-                   'bind': HOST_ADDR if role == 'host' else '127.0.0.1',
-                   'set': a.set + (a.set_host if role == 'host' else a.set_client)})
+                  {'x': x, 'y': y, 'lat': a.latency, 'jit': a.jitter, 'loss': a.loss, 'bind': bind,
+                   'set': a.set + (a.set_host if role == 'host' else a.set_client), 'tset': a.test_set})
         env = dict(os.environ)
         env.update({
             'BCMPFIX_INI': ini,
@@ -85,7 +96,9 @@ def main():
             'BCMP_SPECIES': sp, 'BCMP_SYSTEM': '1', 'BCMP_AI': 'attack',
             'BCMP_TLOG': os.path.join(out, 'tlog_%s.txt' % role),
             'BCMPFIX_PYLOG': os.path.join(out, 'py_%s.log' % role),
-            'BCMP_QUIT_AFTER': str(a.seconds + (8 if role == 'client' else 12)),
+            # the host stays until the last client has quit
+            'BCMP_QUIT_AFTER': str(a.seconds + (12 + stagger * (len(roles) - 1) if role == 'host' else 8)),
+            'BCMP_SEED': str(seed),
         })
         for f in ('tlog_%s.txt' % role,):
             p = os.path.join(out, f)
@@ -99,8 +112,8 @@ def main():
         env['BCMP_CMDLINE'] = '1'
         procs.append(subprocess.Popen([os.path.join(GAME, 'stbc.exe'), '-ForceWindowed'] + gargs, cwd=GAME, env=env))
         print('started', role, procs[-1].pid, flush=True)
-        time.sleep(6 if role == 'host' else 0)
-    deadline = time.time() + a.seconds + 30
+        time.sleep(6 if role == 'host' else stagger)
+    deadline = time.time() + a.seconds + 30 + stagger * len(roles)
     while time.time() < deadline and any(p.poll() is None for p in procs):
         time.sleep(1)
     for i, p in enumerate(procs):

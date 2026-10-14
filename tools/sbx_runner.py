@@ -100,12 +100,12 @@ def run_job(path, status):
         return run_steps(job, status)
     status('synced %d files' % sync_game(status))
     args = [sys.executable, '-I', os.path.join(TOOLS, 'mptest.py'), name]
-    for k in ('seconds', 'fixes', 'rate', 'latency', 'jitter', 'loss', 'species'):
+    for k in ('seconds', 'fixes', 'rate', 'latency', 'jitter', 'loss', 'species', 'clients'):
         if k in job:
             args += ['--' + k, str(job[k])]
     if job.get('solo'):
         args.append('--solo')
-    for opt in ('set', 'set_host', 'set_client'):
+    for opt in ('set', 'set_host', 'set_client', 'test_set'):
         for kv in job.get(opt, []):
             args += ['--' + opt.replace('_', '-'), kv]
     env = dict(os.environ)

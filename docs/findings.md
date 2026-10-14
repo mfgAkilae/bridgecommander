@@ -18,7 +18,8 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 - Remote proxies are driven by NetworkAI (type 9, vtable 0x88BD04, ctor 0x0047DAB0, Update 0x0047DE70). It extrapolates the target along the received forward vector × speed, commands impulse, pulls the position towards the target with gain 1/s (0x0047E180), has a dead band of 0.5 units while moving (compare at 0x0047E20E), and turns physically [V].
 - **Bug:** NetworkAI +0x28 (last update time) is not initialised. The first Update uses the absolute game time as dt and flings the ship ("first-frame fling") [V]. Fix: 0x0047DD06 `D9 5E 2C` → `D9 5E 28`.
 - No latency or clock offset handling. AI+0x2C (sender time) is written but never read. The client copies the host game time once at join [V].
-- The host relays its smoothed proxy, not the state the client reported last [V].
+- The host relays its smoothed proxy, not the state the client reported last [V]. The writer 0x005B17F0 reads position, two orientation vectors (vtable +0xAC/+0xB0) and speed from the live object, unless the snapshot flag ship+0x2FC is set: then it uses the snapshot at ship+0x300 (position), +0x30C/+0x318 (vectors), +0x324 (speed) and clears the flag. The stock code fills the snapshot only for collisions of the local player ship (0x005AF890) [V]. In a 6-player game other clients saw a client's ship with 1.1 units mean error, the host 0.3 [R].
+- NetworkAI::Update advances the target (+0x30) every frame by (now − last) × speed (+0x54) × forward (+0x3C), so the target is the dead-reckoned received position; the proxy follows it with the correction lag [V].
 - **Timing:** frame dt comes from QPC since boot, stored as a float (0x007B7B90). dt jitters by ±½ ulp of the OS uptime: ±7.8 ms after 1.5 days, ±15.6 ms after 3 days. Windows Fast Startup keeps the uptime across shutdowns. The game time is a float accumulator as well [V mechanism].
 
 ## Weapons, damage and death
@@ -28,6 +29,8 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 - MP-only receiver asymmetry: guided torpedoes get MaxAngularAccel ×1.5 and GuidanceLifetime ×1.25 (0x57D4DF); unguided torpedoes with a ship target are re-aimed at the predicted intercept (0x57D540–0x57D75A) [V].
 - **Bug:** flag bits are swapped (sender bit0 = sound, bit1 = skew; receiver bit0 = skew, bit1 = sound) [V].
 - Every peer runs hit detection: ProximityManager 0x5A8740 → 0x5A8810 → Torpedo::DetectCollision 0x579010 (thiscall, `RET 4`) → ship +0x140 (0x5AE730, shield/hull test) and +0x144 (0x5AED90, apply hit) [V]. 0x5AE730 reads the shield subsystem at ship+0x2C0, per-facing charge fraction at +0xC0 + i*4, "shield down" at ≤ 0.1 [V]. DetectCollision applies hits in a loop of two passes (`cmp eax, 2` at 0x5791BA) [V].
+- DetectCollision passes the segment from the torpedo's previous position (+0x150) to its current position (vtable +0x94) to the ship's hit test. 0x5AE730 tests the hull mesh first (0x594310) when the segment starts inside the shield ellipsoid; otherwise it intersects the ellipsoid and checks the facing [V].
+- Pulse weapons (disruptors) fire Torpedo objects (payload WP_PULSE). WeaponHitEvent knows only PHASER, TORPEDO and TRACTOR_BEAM, so pulse hits are reported as TORPEDO [V]. Disruptor cannons fire in pairs; both projectiles often hit within a few ms [R].
 - Damage is applied only if `IsHost || !IsMP` (shields 0x5AEF5B, hull 0x5AEF9A): the host is authoritative for damage, clients only show effects [V].
 - Death is decided only on the host (0x5AFEA0 → ET_OBJECT_EXPLODING → handler 0x6A1240 → opcode 0x06 to "NoMe") [V].
 - Host health sync: StateUpdate flag 0x20, round robin over ship+0x284 (includes the hull), 1 byte per subsystem, written directly to the condition (+0x30) [V].
@@ -45,6 +48,7 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 - `Autoexec` does `try: import Local`.
 - Python C API in the exe: PyRun_SimpleString 0x0074AE80, Py_InitModule4 0x0074D140 (API 1007), PyArg_ParseTuple 0x0074E310, Py_None 0x0095DD20, PyInt_FromLong 0x0074C6E0, PyString_FromString 0x007506C0.
 - An uncaught exception in an event handler opens the blocking "TG Python Exception Debug Console" (0x006F9470). In a running MP game this hangs the process, so every handler in the mod catches all exceptions.
+- Some game code calls `close()` on `sys.stdout`; a replacement object without `close`/`flush` raises AttributeError and opens the debug console (seen once in a 6-player join) [R].
 - After D3D init the x87 FPU runs in single precision; `time.time()` then advances in steps of 128 s. The mod gives scripts an integer millisecond clock (`bcmpdll.ms()`).
 - Python file I/O from game scripts does not produce files (cause unknown); the mod's `bcmpdll` module provides logging.
 - Hidden command line options parsed in 0x004388A0: `-Client -IP <ip> -Name <name>`, `-Listener`, `-Dedicated`, `-Mission <m>`, `-Password`, `-SkipChecksum`, `-TestMode`, `-ForceWindowed`. The client refuses an IP equal to its own resolved host IP (0x006B9460, error 0xB).
@@ -58,6 +62,7 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 | Slow correction, dead band | gain ×5 (call hook at 0x0047E01D), no dead band | 0x0047E20E |
 | Update rate | 50 ms instead of 100 ms at close range | immediates at 0x5A23BD, 0x5A2418, 0x5A244A, 0x5A2480, 0x5A2499, 0x5A24CB |
 | No latency compensation | ping/pong RTT per peer in `bcmpfix_mp.py`; reader detour at 0x005B21C0 extrapolates the NetworkAI target by RTT/2 + 30 ms | `src/lead.c` |
-| Divergent torpedo hits | host reports hits; clients suppress their own torpedo/ship collisions and replay the host's hit with their torpedo copy, forcing the host's shield/hull decision | `src/torpedo.c`, `scripts/bcmpfix_mp.py` |
+| Divergent torpedo hits | host reports hits; clients suppress their own torpedo/ship collisions and replay the host's hit with their torpedo copy, forcing the host's shield/hull decision; the hit-test segment starts at the replay start point (+0x150), and each report takes a different local copy | `src/torpedo.c`, `scripts/bcmpfix_mp.py` |
+| Host relays its proxy (3+ players) | the host writes client ships from the NetworkAI target through the writer's snapshot (ship+0x2FC..0x324) | `src/relay.c` |
 | Head-of-line blocking | resend interval 300 ms | 0x006B82D4 |
 | Float QPC clock | QPC rebased to process start | IAT hook |

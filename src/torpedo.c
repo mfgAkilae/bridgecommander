@@ -36,13 +36,36 @@ static struct {
     DWORD id;
     DWORD expires;
     int mode; /* 0 = local decision, 1 = host says shield hit, 2 = host says hull hit */
+    int hasStart;
+    float start[3]; /* replay start point outside the target (segment start for the hit test) */
 } g_auth[MAXAUTH];
+
+/* The hit test (ship vtable +0x140, 0x005AE730) checks the segment from the
+ * torpedo's previous position (+0x150) to its current one. After the script moved
+ * the torpedo for a replay, +0x150 still holds where the local copy was, often
+ * inside the target's shield ellipsoid: then the stock code tests the hull first. */
+#define TORP_PREV_POS 0x150
 
 void torpedo_authorize_mode(DWORD torpId, int mode);
 
 void torpedo_authorize(DWORD torpId)
 {
     torpedo_authorize_mode(torpId, 0);
+}
+
+static int auth_slot(DWORD torpId);
+
+void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z)
+{
+    int i;
+    torpedo_authorize_mode(torpId, mode);
+    i = auth_slot(torpId);
+    if (i >= 0) {
+        g_auth[i].hasStart = 1;
+        g_auth[i].start[0] = x;
+        g_auth[i].start[1] = y;
+        g_auth[i].start[2] = z;
+    }
 }
 
 void torpedo_authorize_mode(DWORD torpId, int mode)
@@ -60,17 +83,25 @@ void torpedo_authorize_mode(DWORD torpId, int mode)
     g_auth[slot].id = torpId;
     g_auth[slot].expires = now + 2000;
     g_auth[slot].mode = mode;
+    g_auth[slot].hasStart = 0;
 }
 
-/* returns -1 if not authorised, else the mode */
-static int is_authorized(DWORD torpId)
+/* slot of a valid authorisation, or -1 */
+static int auth_slot(DWORD torpId)
 {
     int i;
     DWORD now = GetTickCount();
     for (i = 0; i < MAXAUTH; i++)
         if (g_auth[i].id == torpId && (int)(now - g_auth[i].expires) < 0)
-            return g_auth[i].mode;
+            return i;
     return -1;
+}
+
+/* returns -1 if not authorised, else the mode */
+static int is_authorized(DWORD torpId)
+{
+    int i = auth_slot(torpId);
+    return i < 0 ? -1 : g_auth[i].mode;
 }
 
 /* Shield subsystem of a ship: ship+0x2C0; per-facing charge fraction at +0xC0,
@@ -88,7 +119,8 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
         if (((PFN_IsTypeOf)vt[2])(other, 0, CT_SHIP)) {
             DWORD id = *(DWORD *)((BYTE *)torp + 4);
             BYTE one = 1, two = 2;
-            int mode = is_authorized(id);
+            int slot = auth_slot(id);
+            int mode = slot < 0 ? -1 : g_auth[slot].mode;
             float *pct = NULL, saved[6];
             int i;
             if (mode < 0) {
@@ -96,6 +128,9 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
                 return;
             }
             g_allowed++;
+            /* replay: the hit segment starts at the replay start point outside the target */
+            if (g_auth[slot].hasStart)
+                memcpy((BYTE *)torp + TORP_PREV_POS, g_auth[slot].start, 12);
             /* make the local shield/hull decision follow the host's */
             if (mode > 0) {
                 BYTE *sh = *(BYTE **)((BYTE *)other + SHIP_SHIELDS);

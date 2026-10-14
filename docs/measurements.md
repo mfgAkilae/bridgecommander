@@ -65,3 +65,49 @@ The release build (DLL and script with host-mod detection) at 100 ms ±40 ms, 3 
   ship did not produce a local hit within three approaches; the client retired those torpedoes, so
   the hits were missing on its screen (damage is the host's anyway). Across all bcmpfix runs: 28 of
   30 hit reports replayed. See issue #15.
+
+## Six players
+
+14.10.2026, development build after v1.0.0. One host and five clients in one sandbox, ship classes
+Akira, Ambassador (Federation), Bird of Prey, Vor'cha (Klingon), Warbird (Romulan) and Galor
+(Cardassian), so disruptor pulses are included. Free-for-all; each scripted pilot attacks the
+nearest enemy and re-picks every 20 s. 180 s per run.
+
+From here on the analysis skips the first 5 s after a ship appears for a viewer (proxies settle
+after a join). Applied to the 2-player matrix above, this changes its means by at most 0.08 units.
+
+Mean position error in game units (95th percentile / maximum in brackets). "Client views client"
+is the case where the host relays a client's ship to the other clients.
+
+| Network | Build | Client views host | Host views client | Client views client | Teleports | Torpedo hits seen by all clients / by none |
+|---|---|---|---|---|---|---|
+| 60 ms ±20 ms, 1 % loss | original¹ | 3.67 (6.38 / 16.3) | 2.69 (5.38 / 12.7) | 7.09 (12.5 / 18.2) | 2 | 36 of 68 / 16 |
+| 60 ms ±20 ms, 1 % loss | v1.0.0 | 0.71 (1.35 / 1.61) | 0.32 (0.64 / 2.14) | 1.11 (2.14 / 3.81) | 0 | 36 of 72 / 10 |
+| 60 ms ±20 ms, 1 % loss | development | 0.63 (1.12 / 1.95) | 0.31 (0.62 / 1.74) | 0.73 (1.38 / 2.11) | 0 | 80 of 87 / 1 |
+| 100 ms ±40 ms, 3 % loss | original¹ | 4.59 (8.35 / 33.6) | 2.63 (5.48 / 17.0) | 6.57 (11.9 / 48.8) | 22 | 20 of 69 / 14 |
+| 100 ms ±40 ms, 3 % loss | development | 0.51 (0.98 / 1.52) | 0.32 (0.60 / 1.44) | 0.81 (1.65 / 4.58) | 0 | 55 of 62 / 1 |
+
+¹ In the original runs some clients hung while joining (see below), so these rows have 3 and 4
+clients instead of 5.
+
+Shield/hull decision of matched torpedo hits: v1.0.0 differed from the host on 52 matches,
+the development build on 4 (60 ms) and 6 (100 ms).
+
+What the development build changes:
+
+- **Host relay (#10).** The host wrote client ships from its own smoothed proxy, which trails the
+  received position by the correction lag. Now it writes them from the NetworkAI target, the
+  received position dead-reckoned to the current time. Client-views-client error: 1.11 → 0.73.
+- **Torpedo replay (#15).** The client's hit test runs on the segment from the torpedo's previous
+  position to its current one. After the replay moved the torpedo, the previous position was still
+  where the local copy had been, often inside the target's shield, so the game tested the hull first.
+  The replay start point is now the segment start. Disruptors fire in pairs, and both hit reports
+  picked the same local projectile; a projectile that already replays a hit is now skipped.
+
+Hangs while joining: in the original runs 4 of 20 clients stopped at a blocking Python exception
+dialog of the game within a few seconds after the host's first answer, before the mission started.
+With bcmpfix 0 of 20 clients hung. The exception text could not be captured yet (one diagnostic
+run with early logging did not reproduce it), so the cause is open.
+
+Two-player check with the development build (100 ms ±40 ms, 3 % loss): host ship 0.55, client
+ship 0.24, 6 of 6 torpedo hits seen by both, so no regression against v1.0.0 (0.46–0.58 / 0.23–0.25).
