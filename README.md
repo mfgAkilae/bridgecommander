@@ -101,8 +101,8 @@ per row; latency, jitter and loss apply per direction:
 
 Six players (host + five clients, mixed Federation, Klingon, Romulan and Cardassian ships), 60 ms
 ±20 ms, 1 % loss: other clients' ships were 7.09 units off in the original, 1.11 with v1.0.0 and
-0.73 with the development build (host relay). Torpedo hits seen by all five clients: 36 of 68
-(original), 36 of 72 (v1.0.0), 80 of 87 (development build).
+0.73 with v1.1.0 (host relay). Torpedo hits seen by all five clients: 36 of 68
+(original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0).
 
 Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 
@@ -111,14 +111,14 @@ Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 
 - Tested with up to six players in one sandbox, not over the internet and not with a dedicated
-  server (#13). The development build after v1.0.0 relays the received state of client ships
+  server (#13). Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
 - In the original game some clients hung in a Python exception dialog while six players joined
   (4 of 20); with bcmpfix none did (0 of 20). Cause not yet known (#16).
 - A small lateral error remains during hard turns (extrapolation follows the forward vector only) (#11).
 - Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
-  host-confirmed hit fails on the client and the hit is not shown there (#15; improved in the
-  development build: 80 of 87 hits seen by all five clients in a six-player game, 1 by none).
+  host-confirmed hit fails on the client and the hit is not shown there (#15; improved in
+  v1.1.0: 80 of 87 hits seen by all five clients in a six-player game, 1 by none).
 - Torpedo flight paths still differ between players: swapped flag bits (#8) and different guidance
   parameters on MP receivers (#9). The hit outcome is the host's.
 - Peers without the mod keep the original behaviour. Torpedo authority turns on only when the host
