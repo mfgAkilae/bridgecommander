@@ -30,6 +30,8 @@ def main():
     ap.add_argument('--set-host', action='append', default=[])
     ap.add_argument('--set-client', action='append', default=[])
     ap.add_argument('--test-set', action='append', default=[])
+    ap.add_argument('--raise-once', action='store_true')
+    ap.add_argument('--test-infopane', action='store_true')
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
     ap.add_argument('--steps', default='', help='JSON file with program steps instead of a game run (see sbx_runner)')
     a = ap.parse_args()

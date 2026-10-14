@@ -1,6 +1,7 @@
 """Capture a window by title (PrintWindow) into a PNG.
 
 Usage: python -I wincap.py "<title substring>" out.png [index]
+       python -I wincap.py --pid <pid> <out prefix>   (all windows of a process: texts + PNGs)
 """
 import ctypes
 import ctypes.wintypes as wt
@@ -46,21 +47,12 @@ def write_png(path, w, h, bgra):
     open(path, 'wb').write(png)
 
 
-def main():
-    wins = find_windows(sys.argv[1])
-    idx = int(sys.argv[3]) if len(sys.argv) > 3 else 0
-    if not wins:
-        print('no window')
-        return 1
-    for i, (h, t) in enumerate(wins):
-        print(i, hex(h), t)
-    h = wins[idx][0]
-    if user32.IsHungAppWindow(h):
-        print('window hung')
-        return 2
+def capture(h, path):
     r = wt.RECT()
     user32.GetClientRect(h, ctypes.byref(r))
     w, hh = r.right, r.bottom
+    if w <= 0 or hh <= 0:
+        return 3
     hdc = user32.GetDC(h)
     mdc = gdi32.CreateCompatibleDC(hdc)
     bmp = gdi32.CreateCompatibleBitmap(hdc, w, hh)
@@ -82,12 +74,85 @@ def main():
     bi.biBitCount = 32
     buf = ctypes.create_string_buffer(w * hh * 4)
     gdi32.GetDIBits(mdc, bmp, 0, hh, buf, ctypes.byref(bi), 0)
-    write_png(sys.argv[2], w, hh, buf.raw)
+    write_png(path, w, hh, buf.raw)
     gdi32.DeleteObject(bmp)
     gdi32.DeleteDC(mdc)
     user32.ReleaseDC(h, hdc)
-    print('saved', sys.argv[2], w, hh)
+    print('saved', path, w, hh)
     return 0
+
+
+def window_text(h):
+    """Text of a window via WM_GETTEXT with a timeout (works across processes)."""
+    n = ctypes.c_size_t(0)
+    if not user32.SendMessageTimeoutW(h, 0x000E, 0, 0, 2, 1000, ctypes.byref(n)):  # WM_GETTEXTLENGTH
+        return ''
+    b = ctypes.create_unicode_buffer(n.value + 1)
+    r = ctypes.c_size_t(0)
+    user32.SendMessageTimeoutW(h, 0x000D, n.value + 1, b, 2, 1000, ctypes.byref(r))  # WM_GETTEXT
+    return b.value
+
+
+def class_name(h):
+    b = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(h, b, 256)
+    return b.value
+
+
+def dump_pid(pid, prefix):
+    """All top-level windows of a process: title, class and child window texts into
+    <prefix>.txt, and a PNG of each visible window."""
+    tops = []
+
+    @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+    def cb(h, l):
+        p = wt.DWORD(0)
+        user32.GetWindowThreadProcessId(h, ctypes.byref(p))
+        if p.value == pid:
+            tops.append(h)
+        return True
+    user32.EnumWindows(cb, 0)
+    out = []
+    for i, h in enumerate(tops):
+        out.append('=== window %d hwnd=%s class=%s visible=%d title=%r' % (
+            i, hex(h), class_name(h), user32.IsWindowVisible(h), window_text(h)))
+        kids = []
+
+        @ctypes.WINFUNCTYPE(ctypes.c_bool, wt.HWND, wt.LPARAM)
+        def ccb(c, l):
+            kids.append(c)
+            return True
+        user32.EnumChildWindows(h, ccb, 0)
+        for c in kids:
+            t = window_text(c)
+            if t:
+                out.append('--- child %s class=%s' % (hex(c), class_name(c)))
+                out.append(t)
+        if user32.IsWindowVisible(h) and not user32.IsHungAppWindow(h):
+            try:
+                capture(h, '%s_%d.png' % (prefix, i))
+            except Exception as e:
+                out.append('capture failed: %r' % e)
+    with open(prefix + '.txt', 'w', encoding='utf-8') as f:
+        f.write('\n'.join(out) + '\n')
+    return 0
+
+
+def main():
+    if sys.argv[1] == '--pid':
+        return dump_pid(int(sys.argv[2]), sys.argv[3])
+    wins = find_windows(sys.argv[1])
+    idx = int(sys.argv[3]) if len(sys.argv) > 3 else 0
+    if not wins:
+        print('no window')
+        return 1
+    for i, (h, t) in enumerate(wins):
+        print(i, hex(h), t)
+    h = wins[idx][0]
+    if user32.IsHungAppWindow(h):
+        print('window hung')
+        return 2
+    return capture(h, sys.argv[2])
 
 
 if __name__ == '__main__':

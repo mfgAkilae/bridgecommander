@@ -47,10 +47,17 @@ static int __fastcall hk_Writer(void *ship, void *edx, void *peer)
         void **vt = *(void ***)ship;
         float tmp[3], *snap = (float *)(s + SHIP_SNAPSHOT), *v;
         memcpy(snap, ai + 0x30, 12);
-        /* orientation: the proxy's own vectors, read like the stock snapshot code does */
-        v = ((PFN_GetVec)vt[0xAC / 4])(ship, 0, tmp);
+        /* orientation: the received forward (+0x3C) and up (+0x48) vectors, which the
+         * reader stores in this order; the proxy's own orientation lags in turns, and
+         * the other clients extrapolate along the forward vector we send. Fall back to
+         * the proxy's vectors (vtable +0xAC forward, +0xB0 up) if none was received. */
+        v = (float *)(ai + 0x3C);
+        if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] < 0.25f)
+            v = ((PFN_GetVec)vt[0xAC / 4])(ship, 0, tmp);
         memcpy(snap + 3, v, 12);
-        v = ((PFN_GetVec)vt[0xB0 / 4])(ship, 0, tmp);
+        v = (float *)(ai + 0x48);
+        if (v[0] * v[0] + v[1] * v[1] + v[2] * v[2] < 0.25f)
+            v = ((PFN_GetVec)vt[0xB0 / 4])(ship, 0, tmp);
         memcpy(snap + 6, v, 12);
         snap[9] = *(float *)(ai + 0x54);
         s[SHIP_SNAPSHOT_FLAG] = 1;

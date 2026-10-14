@@ -112,6 +112,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID res)
         torpedo_install();
         lead_install();
         relay_install();
+        scripterr_install();
     }
     return TRUE;
 }

@@ -23,11 +23,13 @@ NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel
 FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0, 'FixProxyFirstFrame': 0,
              'NoCorrectionDeadband': 0, 'CorrectionGainPercent': 100, 'StateUpdateIntervalMs': 100,
              'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'ResendIntervalMs': 1000, 'ScriptLayer': 0, 'TorpedoHitAuthority': 0,
-             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'MaxFPS': 0}
+             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'SmoothCorrection': 0,
+             'MaxFPS': 0}
 FIXES_ON = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 1, 'FixDeltaBase': 1, 'FixProxyFirstFrame': 1,
             'NoCorrectionDeadband': 1, 'CorrectionGainPercent': 500, 'StateUpdateIntervalMs': 50,
             'TimerResolution1ms': 1, 'ClockFromProcessStart': 1, 'ResendIntervalMs': 300, 'ScriptLayer': 1, 'TorpedoHitAuthority': 1,
-            'LatencyCompensation': 1, 'HostRelayReceivedState': 1, 'MaxFPS': 0}
+            'LatencyCompensation': 1, 'HostRelayReceivedState': 1, 'NoScriptErrorConsole': 1, 'SmoothCorrection': 1,
+            'MaxFPS': 0}
 
 
 def write_ini(path, fixes, rate, test):
@@ -62,6 +64,8 @@ def main():
     ap.add_argument('--set-host', action='append', default=[], help='like --set, host only')
     ap.add_argument('--set-client', action='append', default=[], help='like --set, client only')
     ap.add_argument('--test-set', action='append', default=[], help='extra [Test] line, e.g. PythonTickDelayMs=1500')
+    ap.add_argument('--raise-once', action='store_true', help='clients raise once in a script event handler')
+    ap.add_argument('--test-infopane', action='store_true', help='call RebuildInfoPane once with no info pane')
     a = ap.parse_args()
     if not IN_SANDBOX and os.environ.get('BCMP_ALLOW_HOST') != '1':
         sys.exit('refusing to start the game outside Windows Sandbox (set BCMP_ALLOW_HOST=1 to override)')
@@ -99,6 +103,8 @@ def main():
             # the host stays until the last client has quit
             'BCMP_QUIT_AFTER': str(a.seconds + (12 + stagger * (len(roles) - 1) if role == 'host' else 8)),
             'BCMP_SEED': str(seed),
+            'BCMP_RAISE_ONCE': '1' if a.raise_once and role != 'host' else '0',
+            'BCMP_TEST_INFOPANE': '1' if a.test_infopane else '0',
         })
         for f in ('tlog_%s.txt' % role,):
             p = os.path.join(out, f)
@@ -120,6 +126,10 @@ def main():
         if p.poll() is None:
             # still running after the scripted quit: hung - dump its threads first
             dump = os.path.join(out, 'hang_%s.txt' % roles[i][0])
+            # window titles/texts and screenshots (e.g. the Python exception console)
+            subprocess.run([sys.executable, '-I', os.path.join(os.path.dirname(os.path.abspath(__file__)), 'wincap.py'),
+                            '--pid', str(p.pid), os.path.join(out, 'hangwin_%s' % roles[i][0])],
+                           capture_output=True, text=True, timeout=60)
             with open(dump, 'w') as f:
                 for _ in range(3):
                     r = subprocess.run([sys.executable, '-I', os.path.join(os.path.dirname(os.path.abspath(__file__)),

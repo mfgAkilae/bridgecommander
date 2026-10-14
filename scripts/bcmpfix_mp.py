@@ -15,6 +15,7 @@
 #
 # All players need this file and the DLL; the features follow bcmpfix.ini.
 import App
+import sys
 
 MSG_BASE = App.MAX_MESSAGE_TYPES + 120
 MSG_HIT = MSG_BASE
@@ -35,7 +36,7 @@ g_iLastHitTorp = 0
 g_iLastHitTime = 0
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0}
+g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0}
 g_iNextStats = 0
 
 
@@ -65,6 +66,8 @@ def DoTick():
 	global g_iNextPing, g_iNextLead, g_iNextStats
 	if not App.g_kUtopiaModule.IsMultiplayer():
 		return
+	GuardInfoPane()
+	LogGuards()
 	pNet = App.g_kUtopiaModule.GetNetwork()
 	if not pNet:
 		return
@@ -87,6 +90,53 @@ def DoTick():
 		g_iNextStats = t + 10000
 		import bcmpdll
 		DllLog('bcmpfix_mp stats %s rtt=%s torp(suppressed allowed)=%s' % (str(g_dStats), str(g_dRtt), bcmpdll.torpstats()))
+
+# ---- join fix -------------------------------------------------------------
+# The missions' RebuildInfoPane (Mission1/2/3/5Menus) runs when a player ship is
+# created and uses MissionMenusShared.g_pInfoPane without checking it. A ship that
+# arrives while a client joins, before the pane exists, raises AttributeError: in
+# windowed mode the game then freezes in its Python debug console, in fullscreen
+# ObjectCreatedHandler stops before ResetEnemyFriendlyGroups (and the small UI font
+# set by RebuildInfoPane stays). Skip the rebuild while there is no pane; the game
+# rebuilds the pane when it creates it.
+
+GUARDED_MENUS = ('Multiplayer.Episode.Mission1.Mission1Menus', 'Multiplayer.Episode.Mission2.Mission2Menus',
+		'Multiplayer.Episode.Mission3.Mission3Menus', 'Multiplayer.Episode.Mission5.Mission5Menus')
+g_dGuarded = {}
+
+def GuardInfoPane():
+	# called by the DLL from inside the game's __import__: no import statements here
+	for sName in GUARDED_MENUS:
+		if g_dGuarded.has_key(sName) or not sys.modules.has_key(sName):
+			continue
+		pMod = sys.modules[sName]
+		if pMod is None or not hasattr(pMod, 'RebuildInfoPane'):
+			continue
+		pMod.RebuildInfoPane = MakeInfoPaneGuard(pMod.RebuildInfoPane)
+		g_dGuarded[sName] = 1
+		g_lGuardLog.append(sName)
+
+# The menus module is often imported by the failing handler itself, so the DLL calls
+# GuardInfoPane right after every import of a "...Menus" module (hook in the game's
+# __import__, src/scripterr.c); the tick is only a fallback. A Python-level
+# __import__ wrapper does not work here: the game's __import__ takes the caller's
+# frame globals and adds a dummy fromlist when they are missing.
+g_lGuardLog = []            # names guarded, logged by the next tick
+
+def LogGuards():
+	while g_lGuardLog:
+		DllLog('bcmpfix_mp: guarded %s.RebuildInfoPane' % g_lGuardLog[0])
+		del g_lGuardLog[0]
+
+def MakeInfoPaneGuard(pOrig):
+	# Python 1.5 has no closures: pass the original through a default argument
+	def RebuildInfoPane(pOrig=pOrig):
+		import Multiplayer.MissionMenusShared
+		if Multiplayer.MissionMenusShared.g_pInfoPane is None:
+			g_dStats['infopane_skipped'] = g_dStats['infopane_skipped'] + 1
+			return
+		pOrig()
+	return RebuildInfoPane
 
 def Register(pMission):
 	global g_idMission, g_bHostHasMod
@@ -397,3 +447,4 @@ def FindTorpedo(pTarget, iShooter, fX, fY, fZ):
 			break
 		iGuard = iGuard + 1
 	return pBest
+

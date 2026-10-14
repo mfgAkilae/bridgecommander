@@ -308,6 +308,8 @@ def InGame():
 		return
 	if g_sAI == 'attack':
 		Pilot(pPlayer)
+	if InState() > 5.0:
+		TestInfoPaneGuard()
 	t = Now()
 	if t - g_fLastLog < g_fLogEvery * 1000.0:
 		return
@@ -372,7 +374,44 @@ def OnExploding(pObject, pEvent):
 		Log('D %d ?' % Now())
 	pObject.CallNextHandler(pEvent)
 
+g_iInfoPaneTest = -1
+
+def TestInfoPaneGuard():
+	# BCMP_TEST_INFOPANE=1: call the mission's RebuildInfoPane once while the info pane
+	# is None (the join race) and log whether it raised
+	global g_iInfoPaneTest
+	if g_iInfoPaneTest < 0:
+		g_iInfoPaneTest = string.atoi(Env('BCMP_TEST_INFOPANE', '0'))
+	if g_iInfoPaneTest != 1:
+		return
+	g_iInfoPaneTest = 2
+	import Multiplayer.MissionMenusShared
+	import Multiplayer.Episode.Mission1.Mission1Menus
+	pShared = Multiplayer.MissionMenusShared
+	pSaved = pShared.g_pInfoPane
+	pShared.g_pInfoPane = None
+	try:
+		try:
+			Multiplayer.Episode.Mission1.Mission1Menus.RebuildInfoPane()
+			Log('X INFOPANE %d no exception' % Now())
+		except:
+			import sys
+			Log('X INFOPANE %d exception %s %s' % (Now(), str(sys.exc_type), str(sys.exc_value)))
+	finally:
+		pShared.g_pInfoPane = pSaved
+
+g_iRaise = -1
+
 def OnTorpedoFired(pObject, pEvent):
+	# BCMP_RAISE_ONCE=1: raise once from this event handler (tests the game's
+	# exception dispatcher / debug console)
+	global g_iRaise
+	if g_iRaise < 0:
+		g_iRaise = string.atoi(Env('BCMP_RAISE_ONCE', '0'))
+	if g_iRaise == 1:
+		g_iRaise = 2
+		Log('X RAISE %d' % Now())
+		raise 'bcmptest deliberate exception'
 	try:
 		Log('F %d %s' % (Now(), ObjName(pEvent.GetSource())))
 	except:

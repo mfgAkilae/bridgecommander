@@ -40,12 +40,14 @@ void config_load(void)
     g_cfg.fixProxyInit = ini_int(ini, "Fixes", "FixProxyFirstFrame", 1);
     g_cfg.noDeadband = ini_int(ini, "Fixes", "NoCorrectionDeadband", 1);
     g_cfg.correctionGain = ini_int(ini, "Fixes", "CorrectionGainPercent", 500) / 100.0f;
+    g_cfg.smoothCorrection = ini_int(ini, "Fixes", "SmoothCorrection", 1);
     g_cfg.sendInterval = ini_int(ini, "Fixes", "StateUpdateIntervalMs", 50) / 1000.0f;
     g_cfg.retransmitMs = ini_int(ini, "Fixes", "ResendIntervalMs", 300);
     g_cfg.torpedoAuthority = ini_int(ini, "Fixes", "TorpedoHitAuthority", 1);
     g_cfg.latencyComp = ini_int(ini, "Fixes", "LatencyCompensation", 1);
     g_cfg.maxLeadMs = ini_int(ini, "Fixes", "MaxLatencyCompensationMs", 300);
     g_cfg.hostRelay = ini_int(ini, "Fixes", "HostRelayReceivedState", 1);
+    g_cfg.noScriptConsole = ini_int(ini, "Fixes", "NoScriptErrorConsole", 1);
     g_cfg.mpScript = ini_int(ini, "Fixes", "ScriptLayer", 1);
     if (!g_cfg.mpScript)
         g_cfg.torpedoAuthority = g_cfg.latencyComp = 0;
@@ -67,6 +69,7 @@ void config_load(void)
     g_cfg.emuLossPct10 = ini_int(ini, "Test", "LossPerMille", 0);
     GetPrivateProfileStringA("Test", "PythonTick", "", g_cfg.pythonTick, sizeof(g_cfg.pythonTick), ini);
     g_cfg.pythonTickMs = ini_int(ini, "Test", "PythonTickMs", 100);
+    g_cfg.pythonRedirect = ini_int(ini, "Test", "PythonRedirect", 1);
     g_cfg.pythonTickDelay = ini_int(ini, "Test", "PythonTickDelayMs", 6000) / 1000.0;
     g_cfg.statsIntervalSec = ini_int(ini, "Debug", "NetStatsSec", 0);
     g_cfg.verbose = ini_int(ini, "Debug", "Verbose", 0);

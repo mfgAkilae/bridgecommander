@@ -43,6 +43,8 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 - **Newly spawned ships flung away:** A newly created network ship used the whole game time as the time step of its first frame and was flung far away. This is fixed.
 - **Slow correction:** Remote ships were pulled to their network position with a time constant of about 1 s. Errors below 0.5 units were not corrected at all.
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
+  - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
+- **Three or more players:** The host passes on each player's ship as that player reported it (position, direction, speed), not its own smoothed copy.
 - **Latency compensation:** Players measure the network round trip to each other with pings. Remote ships are extrapolated by that time. Without this, you see every ship where it was one network latency ago.
 
 ### 2. Torpedoes
@@ -61,6 +63,11 @@ All players then see the same hits and misses as the host, delayed by about one 
 
 - **Resending lost packets:** Guaranteed messages (firing, cloaking, deaths, game events) arrive in a fixed order. A lost packet used to hold up all following messages for at least 1 s. Now the resend happens after 0.3 s.
 - **Game clock:** The game clock was computed from the time since Windows started and stored as a 32-bit float. After days of uptime, frame timing became inaccurate by up to ±15 ms. Windows Fast Startup does not reset this time on shutdown. Now the clock counts from program start.
+
+### 4. Freezes
+
+- **Joining a running game:** If a player's ship arrived while you were still joining, the game's own mission script failed. In windowed mode the game then froze. bcmpfix skips the failing step until the game is ready for it.
+- **Script errors in windowed mode:** Any script error opened the "TG Python Exception Debug Console" in a separate window, and the game waited for keyboard input there. bcmpfix writes the error to `bcmpfix.log` and the game continues, as it does in fullscreen.
 
 You can turn off each fix separately in `bcmpfix.ini`. The file has comments.
 

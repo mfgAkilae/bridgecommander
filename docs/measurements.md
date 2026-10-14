@@ -111,3 +111,49 @@ run with early logging did not reproduce it), so the cause is open.
 
 Two-player check with v1.1.0 (100 ms ±40 ms, 3 % loss): host ship 0.55, client
 ship 0.24, 6 of 6 torpedo hits seen by both, so no regression against v1.0.0 (0.46–0.58 / 0.23–0.25).
+
+## Rubber-banding and v1.2.0
+
+The mean error does not show small jumps back. From here on `analyze.py` also counts
+**backward steps**: 100 ms steps in which a remote ship moves more than 0.05 units against its own
+direction of flight (at more than 1 unit/s), i.e. visible rubber-banding.
+
+v1.1.0 pulled remote ships straight towards their network position, five times faster than the
+original. When a ship was ahead of that position (extrapolation overshot, the real ship slowed down or
+turned), it was pulled backwards. v1.2.0 never corrects a ship backwards faster than half the
+distance it flies in that frame (`SmoothCorrection`), so it slows down instead. The host also relays
+the received forward and up vectors with a client's ship instead of its own lagging proxy
+orientation; the other clients extrapolate along that forward vector.
+
+Backward steps (and mean error) by viewer:
+
+| Run | Original | v1.1.0 | v1.2.0 |
+|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss (host ship / client ship) | 2.5 % / 2.5 % | 0.0 % / 0.0 % | 0.0 % / 0.0 % |
+| 2 players, 150 ms ±50 ms, 5 % loss (host ship / client ship) | 2.8 % / 3.5 % | 4.2 % / 6.3 % | 2.0 % / 0.0 %¹ |
+| 6 players, 60 ms: client views host | 3.3 % (3.67) | 5.9 % (0.63) | 5.5 % (0.57)² |
+| 6 players, 60 ms: host views client | 0.6 % (2.69) | 0.7 % (0.31) | 1.0 % (0.32) |
+| 6 players, 60 ms: client views client | 11.3 % (7.09) | 9.3 % (0.73) | 0.9 % (0.44) |
+| 6 players, 100 ms ±40 ms, 3 % loss: client views host | 3.8 % (4.59) | 0.1 % (0.51) | 5.5 % (0.58)² |
+| 6 players, 100 ms: host views client | 2.1 % (2.63) | 1.4 % (0.32) | 2.0 % (0.34) |
+| 6 players, 100 ms: client views client | 5.3 % (6.57) | 7.9 % (0.81) | 2.4 % (0.54) |
+
+¹ Build without the relay orientation change, which only matters for three or more players.
+² Almost all of these steps fall into the first 40 s of the run (for example 99 of 105 for one client at 100 ms);
+afterwards 0–6 per 20 s. The same start-phase pattern appears in one of the two v1.1.0 runs
+(`p6_new`), not in the other. Cause not yet known (issue #17).
+
+Torpedo hits seen by all five clients with v1.2.0: 58 of 61 (60 ms) and 46 of 52 (100 ms), none
+missing on all clients; shield/hull differed from the host on 3 and 12 matches.
+
+## Join race and script errors (v1.2.0)
+
+- Original game, six-player joins: 5 of 40 joining clients hung in the Python debug console
+  (`RebuildInfoPane` before the info pane exists, see `docs/findings.md`).
+- Forced test (the test pilot calls `RebuildInfoPane` with no info pane): without bcmpfix the call
+  raises `AttributeError: 'None' object has no attribute 'KillChildren'`; with v1.2.0 it is skipped.
+- Forced script error in a windowed client (`--raise-once`): without `NoScriptErrorConsole` the client
+  froze (no telemetry after the error); with it the client kept running (762 samples after the
+  error) and `bcmpfix.log` contained the traceback.
+- With bcmpfix's script layer active, 0 of 70 joining clients hung (the race was not observed in
+  those runs).

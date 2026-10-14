@@ -51,10 +51,70 @@ typedef void(__fastcall *PFN_Correct)(void *self, void *edx, void *ship, float d
 static PFN_ThisVoid o_SendStateUpdates;
 static PFN_Correct o_NetAICorrect;
 
+double __cdecl sqrt(double); /* not <math.h>: its logf clashes with ours */
+#define ABSF(x) ((x) < 0.0f ? -(x) : (x))
+
+typedef float *(__fastcall *PFN_GetPos)(void *obj, void *edx);
+typedef void(__fastcall *PFN_SetPos)(void *obj, void *edx, float *pos);
+
+static unsigned long g_heldBack; /* frames in which a backward correction was limited */
+
+/* Smooth correction (SmoothCorrection=1): the stock code moves the proxy straight
+ * towards the target. When the proxy is ahead of the target (extrapolation overshot,
+ * the remote ship slowed down or turned), that move goes against the direction of
+ * flight: the ship visibly jumps back (rubber-banding). Split the error into a part
+ * along the direction of flight and a lateral part. Lateral and forward parts are
+ * corrected as before; a backward part is limited to half the distance the ship flies
+ * in this frame, so the ship only slows down until the target catches up. */
+static void smooth_correct(BYTE *ai, void *ship, float dt)
+{
+    void **vt = *(void ***)ship;
+    float *pos = ((PFN_GetPos)vt[0x94 / 4])(ship, 0);
+    float *target = (float *)(ai + 0x30), *fwd = (float *)(ai + 0x3C);
+    float speed = *(float *)(ai + 0x54);
+    float e[3], m[3], n, along, k, back, newpos[3];
+    int i;
+    for (i = 0; i < 3; i++)
+        e[i] = target[i] - pos[i];
+    n = (float)sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
+    k = dt * g_cfg.correctionGain;
+    if (k > 1.0f)
+        k = 1.0f;
+    if (n < 1e-6f || ABSF(speed) < 0.5f) { /* (nearly) standing: plain correction */
+        for (i = 0; i < 3; i++)
+            newpos[i] = pos[i] + e[i] * k;
+        ((PFN_SetPos)vt[0x78 / 4])(ship, 0, newpos);
+        return;
+    }
+    for (i = 0; i < 3; i++) /* direction of flight */
+        m[i] = fwd[i] / n * (speed < 0.0f ? -1.0f : 1.0f);
+    along = e[0] * m[0] + e[1] * m[1] + e[2] * m[2];
+    back = along * k; /* along-track move this frame (negative = backwards) */
+    if (back < 0.0f) {
+        float limit = 0.5f * ABSF(speed) * dt;
+        if (-back > limit) {
+            back = -limit;
+            g_heldBack++;
+        }
+    }
+    for (i = 0; i < 3; i++)
+        newpos[i] = pos[i] + (e[i] - along * m[i]) * k + m[i] * back;
+    ((PFN_SetPos)vt[0x78 / 4])(ship, 0, newpos);
+}
+
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
+    if (g_cfg.smoothCorrection && ship) {
+        smooth_correct((BYTE *)self, ship, dt);
+        return;
+    }
     o_NetAICorrect(self, 0, ship, dt * g_cfg.correctionGain);
+}
+
+unsigned long netfix_heldback(void)
+{
+    return g_heldBack;
 }
 static double g_nextSend;
 static unsigned long g_frames, g_sends;
@@ -74,8 +134,8 @@ static void __fastcall hk_SendStateUpdates(void *self, void *edx)
     }
     if (g_cfg.statsIntervalSec > 0 && t - g_statT >= g_cfg.statsIntervalSec) {
         if (g_statT > 0)
-            logf("MP frames %.1f/s, state-update rounds %.1f/s, relayed client-ship writes %lu", g_frames / (t - g_statT),
-                 g_sends / (t - g_statT), relay_count());
+            logf("MP frames %.1f/s, state-update rounds %.1f/s, relayed client-ship writes %lu, held-back corrections %lu",
+                 g_frames / (t - g_statT), g_sends / (t - g_statT), relay_count(), g_heldBack);
         g_frames = g_sends = 0;
         g_statT = t;
     }
@@ -117,7 +177,7 @@ static void __fastcall hk_FrameTimer(void *self, void *edx)
         if (!ready && t >= g_cfg.pythonTickDelay) {
             ready = 1;
             logf("starting python tick: %s", g_tickCode);
-            if (pyext_init() && g_cfg.testMode) {
+            if (pyext_init() && g_cfg.testMode && g_cfg.pythonRedirect) {
                 int r = ((PFN_PyRunSimpleString)ADDR_PYRUN_SIMPLESTRING)(
                     "import sys, bcmpdll\n"
                     "class _BcmpOut:\n"
@@ -203,9 +263,10 @@ void netfix_install(void)
         patch_bytes(ADDR_NETAI_CTOR_TIME, "d9 5e 2c", "d9 5e 28", "NetworkAI first-frame time");
     if (g_cfg.noDeadband)
         patch_bytes(ADDR_NETAI_DEADBAND, "d8 1d a8 87 88 00", "d8 1d 58 8b 88 00", "NetworkAI no 0.5 deadband");
-    if (g_cfg.correctionGain > 0 && g_cfg.correctionGain != 1.0f)
+    if ((g_cfg.correctionGain > 0 && g_cfg.correctionGain != 1.0f) || g_cfg.smoothCorrection)
         redirect_call(ADDR_CALL_NETAI_CORRECT, (void *)hk_NetAICorrect, (void **)&o_NetAICorrect, ADDR_NETAI_CORRECT,
-                      "NetworkAI correction gain");
+                      g_cfg.smoothCorrection ? "NetworkAI correction gain + no backward correction"
+                                             : "NetworkAI correction gain");
     if (g_cfg.retransmitMs > 0 && g_cfg.retransmitMs != 1000) {
         /* TGMessage ctor (0x006B82A0): mov ecx,1.0f; mov [eax+0x34],ecx (backoff step);
          * mov [eax+0x30],ecx (first resend). A lost guaranteed packet otherwise stalls

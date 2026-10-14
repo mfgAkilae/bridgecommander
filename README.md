@@ -60,6 +60,12 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
 6. **Head-of-line blocking.** One lost guaranteed packet holds back all following ones for 1 s.
 7. **Float clock.** Frame time comes from the time since Windows started, stored as a 32-bit float;
    the frame timing gets coarse after days of uptime.
+8. **Host relays its smoothed copy.** With three or more players the host sends each client's ship
+   to the other clients from its own lagging proxy, not from what that client reported.
+9. **Join race.** A player ship created while a client joins makes the mission script fail
+   (`RebuildInfoPane` before its panel exists).
+10. **Blocking script error console.** In windowed mode any script error opens the "TG Python
+    Exception Debug Console" and the game waits for keyboard input there: it freezes.
 
 What bcmpfix does about it:
 
@@ -67,11 +73,14 @@ What bcmpfix does about it:
 |---|---|
 | 1 | absolute position in every update; correct delta base on the receiver (for unmodded senders) |
 | 2 | initialise the proxy's last update time |
-| 3 | correction gain ×5, no dead band, 50 ms update interval at close range |
+| 3 | correction gain ×5, no dead band, 50 ms update interval at close range; a ship ahead of its network position slows down instead of being pulled back (v1.2.0) |
 | 4 | peers measure the round trip time with pings; the state update reader extrapolates remote ships by RTT/2 + 30 ms |
 | 5 | the host reports each torpedo hit; clients suppress their own torpedo/ship hits and replay the host's hit with their torpedo copy, including the shield/hull decision |
 | 6 | resend interval 300 ms |
 | 7 | clock relative to process start |
+| 8 | the host relays the received, extrapolated state (position, forward/up, speed) (v1.1.0, orientation v1.2.0) |
+| 9 | the panel update is skipped while the panel does not exist (v1.2.0) |
+| 10 | script errors go to `bcmpfix.log`, the game continues as in fullscreen (v1.2.0) |
 
 ## Verification
 
@@ -101,8 +110,11 @@ per row; latency, jitter and loss apply per direction:
 
 Six players (host + five clients, mixed Federation, Klingon, Romulan and Cardassian ships), 60 ms
 ±20 ms, 1 % loss: other clients' ships were 7.09 units off in the original, 1.11 with v1.0.0 and
-0.73 with v1.1.0 (host relay). Torpedo hits seen by all five clients: 36 of 68
-(original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0).
+0.73 with v1.1.0 (host relay) and 0.44 with v1.2.0. Torpedo hits seen by all five clients: 36 of 68
+(original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0), 58 of 61 (v1.2.0).
+
+Rubber-banding (100 ms steps in which a remote ship moves back against its direction of flight),
+six players, other clients' ships: 11.3 % in the original, 9.3 % with v1.1.0, 0.9 % with v1.2.0.
 
 Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 
@@ -113,8 +125,8 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Tested with up to six players in one sandbox, not over the internet and not with a dedicated
   server (#13). Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
-- In the original game some clients hung in a Python exception dialog while six players joined
-  (4 of 20); with bcmpfix none did (0 of 20). Cause not yet known (#16).
+- Some backward jerks of the host's ship remain in the clients' view during the first 40 s of some
+  six-player runs (#17).
 - A small lateral error remains during hard turns (extrapolation follows the forward vector only) (#11).
 - Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
   host-confirmed hit fails on the client and the hit is not shown there (#15; improved in

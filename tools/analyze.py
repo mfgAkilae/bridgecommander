@@ -73,6 +73,7 @@ def role_key(r):
 def view_errors(ref, track, dead_ts):
     """Errors of a remote view (track) against the owner's trajectory (ref)."""
     errs, ahead, jumps = [], [], 0
+    back, steps = 0, 0  # rubber-banding: 100 ms steps against the view's own direction of flight
     prev = None
     ref_ts = [x[0] for x in ref]
     # skip the first 5 s after the ship appears for this viewer (join: proxies settle)
@@ -98,8 +99,14 @@ def view_errors(ref, track, dead_ts):
             speed = max(math.sqrt(sum(c * c for c in vel)), 1.0)
             if dt > 0 and dist(pos, prev[1]) > 3 * speed * dt + 2.0:
                 jumps += 1
-        prev = (t, pos)
-    return errs, ahead, jumps
+            pv = prev[2]
+            psp = math.sqrt(sum(c * c for c in pv))
+            if 0 < dt <= 0.2 and psp > 1.0:
+                steps += 1
+                if sum((pos[k] - prev[1][k]) * pv[k] / psp for k in range(3)) < -0.05:
+                    back += 1
+        prev = (t, pos, vel)
+    return errs, ahead, jumps, back, steps
 
 
 def torp_hits(hits):
@@ -170,13 +177,14 @@ def analyze(run):
                 continue
             pairs[(name, role)] = view_errors(ref, logs[role][0][name], dead_ts)
             if len(roles) == 2:
-                errs, ahead, jumps = pairs[(name, role)]
+                errs, ahead, jumps, back, steps = pairs[(name, role)]
                 sp = [math.sqrt(sum(c * c for c in x[2])) for x in ref]
                 print('  %-8s owner=%-6s viewed by %-6s samples=%5d err mean=%7.2f p50=%7.2f p95=%7.2f max=%8.2f '
-                      'jumps=%d ahead=%+.2f (owner mean speed %.1f)' % (
+                      'jumps=%d ahead=%+.2f (owner mean speed %.1f) back=%.1f%%' % (
                           name, owner, role, len(errs), sum(errs) / max(len(errs), 1), pct(errs, 0.5),
                           pct(errs, 0.95), max(errs) if errs else float('nan'), jumps,
-                          sum(ahead) / max(len(ahead), 1), sum(sp) / max(len(sp), 1)))
+                          sum(ahead) / max(len(ahead), 1), sum(sp) / max(len(sp), 1),
+                          100.0 * back / max(steps, 1)))
     if len(roles) > 2:
         # matrix of mean errors: rows = ships (owner), columns = viewing instance
         print('  mean error by ship (row, owner) and viewer (column):')
@@ -185,7 +193,7 @@ def analyze(run):
             cells, jsum = [], 0
             for role in roles:
                 if (name, role) in pairs:
-                    errs, ahead, jumps = pairs[(name, role)]
+                    errs, ahead, jumps, back, steps = pairs[(name, role)]
                     cells.append('%9.2f' % (sum(errs) / max(len(errs), 1)))
                     jsum += jumps
                 else:
@@ -203,9 +211,13 @@ def analyze(run):
             errs = [e for v in cats[cat] for e in v[0]]
             ahead = [a for v in cats[cat] for a in v[1]]
             jumps = sum(v[2] for v in cats[cat])
-            print('  %-20s pairs=%2d samples=%6d err mean=%6.2f p50=%6.2f p95=%6.2f max=%7.2f jumps=%d ahead=%+.2f' % (
-                cat, len(cats[cat]), len(errs), sum(errs) / max(len(errs), 1), pct(errs, 0.5), pct(errs, 0.95),
-                max(errs) if errs else float('nan'), jumps, sum(ahead) / max(len(ahead), 1)))
+            back = sum(v[3] for v in cats[cat])
+            steps = sum(v[4] for v in cats[cat])
+            print('  %-20s pairs=%2d samples=%6d err mean=%6.2f p50=%6.2f p95=%6.2f max=%7.2f jumps=%d ahead=%+.2f '
+                  'back=%.1f%%' % (
+                      cat, len(cats[cat]), len(errs), sum(errs) / max(len(errs), 1), pct(errs, 0.5), pct(errs, 0.95),
+                      max(errs) if errs else float('nan'), jumps, sum(ahead) / max(len(ahead), 1),
+                      100.0 * back / max(steps, 1)))
     for role in roles:
         ships, hits, deaths, fired, states = logs[role]
         tor = sum(1 for h in hits if 'wtype=1' in h[2])

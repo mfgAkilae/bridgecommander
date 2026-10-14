@@ -19,6 +19,8 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 - **Bug:** NetworkAI +0x28 (last update time) is not initialised. The first Update uses the absolute game time as dt and flings the ship ("first-frame fling") [V]. Fix: 0x0047DD06 `D9 5E 2C` → `D9 5E 28`.
 - No latency or clock offset handling. AI+0x2C (sender time) is written but never read. The client copies the host game time once at join [V].
 - The host relays its smoothed proxy, not the state the client reported last [V]. The writer 0x005B17F0 reads position, two orientation vectors (vtable +0xAC/+0xB0) and speed from the live object, unless the snapshot flag ship+0x2FC is set: then it uses the snapshot at ship+0x300 (position), +0x30C/+0x318 (vectors), +0x324 (speed) and clears the flag. The stock code fills the snapshot only for collisions of the local player ship (0x005AF890) [V]. In a 6-player game other clients saw a client's ship with 1.1 units mean error, the host 0.3 [R].
+- The correction 0x0047E180 sets the position directly (vtable +0x78) to pos + (target − pos) × min(dt, 1). When the proxy is ahead of the target, that move points against the direction of flight; with a higher gain the ship visibly jumps back (rubber-banding) [V, R].
+- The state update carries a forward and an up vector; the reader stores them at NetworkAI +0x3C and +0x48. In the writer's snapshot they are +0x30C (vtable +0xAC) and +0x318 (vtable +0xB0) [V].
 - NetworkAI::Update advances the target (+0x30) every frame by (now − last) × speed (+0x54) × forward (+0x3C), so the target is the dead-reckoned received position; the proxy follows it with the correction lag [V].
 - **Timing:** frame dt comes from QPC since boot, stored as a float (0x007B7B90). dt jitters by ±½ ulp of the OS uptime: ±7.8 ms after 1.5 days, ±15.6 ms after 3 days. Windows Fast Startup keeps the uptime across shutdowns. The game time is a float accumulator as well [V mechanism].
 
@@ -47,8 +49,9 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 - Builtin modules: array binascii cmath errno math new nt operator regex strop struct time thread cStringIO cPickle _locale marshal imp (no traceback).
 - `Autoexec` does `try: import Local`.
 - Python C API in the exe: PyRun_SimpleString 0x0074AE80, Py_InitModule4 0x0074D140 (API 1007), PyArg_ParseTuple 0x0074E310, Py_None 0x0095DD20, PyInt_FromLong 0x0074C6E0, PyString_FromString 0x007506C0.
-- An uncaught exception in an event handler opens the blocking "TG Python Exception Debug Console" (0x006F9470). In a running MP game this hangs the process, so every handler in the mod catches all exceptions.
-- Some game code calls `close()` on `sys.stdout`; a replacement object without `close`/`flush` raises AttributeError and opens the debug console (seen once in a 6-player join) [R].
+- An uncaught exception in an event handler goes to the dispatcher 0x006F9B80. In fullscreen it prints the traceback (PyErr_Print 0x0074AF10) and continues. In windowed mode (app+0x2C == 0, copied to 0x0099ADD6 in 0x004388A0; `-ForceWindowed` clears it) it calls the blocking "TG Python Exception Debug Console" (0x006F9470): AllocConsole, PyErr_Print into the script's stderr (a StringIO, read back with `getvalue`/`close`), then wait for `resume` or `abort` typed into the console. The game freezes meanwhile [V, R]. Every handler in the mod catches all exceptions; since v1.2.0 the DLL replaces the console call (0x006F9B9B) with PyErr_Print + log.
+- **Bug (join race):** `RebuildInfoPane` in Mission1/2/3/5Menus runs from `ObjectCreatedHandler` when a player ship is created and uses `MissionMenusShared.g_pInfoPane` without a check. If a ship arrives while a client joins, before the pane exists: `AttributeError: 'None' object has no attribute 'KillChildren'` (Mission1.py line 881 → Mission1Menus.py line 841). Windowed: the game freezes (5 of 40 client joins in 6-player tests). Fullscreen: the handler stops before `ResetEnemyFriendlyGroups`, and the small default font set before the failing line stays [V, R].
+- The debug console calls `getvalue()` and `close()` on the script's stdout/stderr. A replacement object without them (the test harness's output redirect) makes the console fail with AttributeError (seen once in a 6-player join) [R].
 - After D3D init the x87 FPU runs in single precision; `time.time()` then advances in steps of 128 s. The mod gives scripts an integer millisecond clock (`bcmpdll.ms()`).
 - Python file I/O from game scripts does not produce files (cause unknown); the mod's `bcmpdll` module provides logging.
 - Hidden command line options parsed in 0x004388A0: `-Client -IP <ip> -Name <name>`, `-Listener`, `-Dedicated`, `-Mission <m>`, `-Password`, `-SkipChecksum`, `-TestMode`, `-ForceWindowed`. The client refuses an IP equal to its own resolved host IP (0x006B9460, error 0xB).
@@ -60,9 +63,12 @@ All addresses refer to `stbc.exe` version 1.1 (image base 0x400000).
 | Delta accumulation, teleports | absolute position in every update; receiver uses the last absolute position as delta base | 0x005B18D7, 0x005B24C6/D8/E8, 0x005A2E62/72/82 |
 | First-frame fling | initialise the last update time | 0x0047DD06 |
 | Slow correction, dead band | gain ×5 (call hook at 0x0047E01D), no dead band | 0x0047E20E |
+| Rubber-banding from the correction | correction replaced: lateral and forward parts as before, a backward part limited to half the distance flown in the frame | `src/netfix.c` |
 | Update rate | 50 ms instead of 100 ms at close range | immediates at 0x5A23BD, 0x5A2418, 0x5A244A, 0x5A2480, 0x5A2499, 0x5A24CB |
 | No latency compensation | ping/pong RTT per peer in `bcmpfix_mp.py`; reader detour at 0x005B21C0 extrapolates the NetworkAI target by RTT/2 + 30 ms | `src/lead.c` |
 | Divergent torpedo hits | host reports hits; clients suppress their own torpedo/ship collisions and replay the host's hit with their torpedo copy, forcing the host's shield/hull decision; the hit-test segment starts at the replay start point (+0x150), and each report takes a different local copy | `src/torpedo.c`, `scripts/bcmpfix_mp.py` |
-| Host relays its proxy (3+ players) | the host writes client ships from the NetworkAI target through the writer's snapshot (ship+0x2FC..0x324) | `src/relay.c` |
+| Blocking debug console in windowed mode | console call replaced: traceback to `bcmpfix.log`, game continues | `src/scripterr.c` |
+| Join race in `RebuildInfoPane` | skipped while `g_pInfoPane` is None; patched when the menus module is imported (`__import__` wrapper) | `scripts/bcmpfix_mp.py` |
+| Host relays its proxy (3+ players) | the host writes client ships from the NetworkAI target and the received forward/up vectors through the writer's snapshot (ship+0x2FC..0x324) | `src/relay.c` |
 | Head-of-line blocking | resend interval 300 ms | 0x006B82D4 |
 | Float QPC clock | QPC rebased to process start | IAT hook |

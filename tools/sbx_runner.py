@@ -105,6 +105,10 @@ def run_job(path, status):
             args += ['--' + k, str(job[k])]
     if job.get('solo'):
         args.append('--solo')
+    if job.get('raise_once'):
+        args.append('--raise-once')
+    if job.get('test_infopane'):
+        args.append('--test-infopane')
     for opt in ('set', 'set_host', 'set_client', 'test_set'):
         for kv in job.get(opt, []):
             args += ['--' + opt.replace('_', '-'), kv]

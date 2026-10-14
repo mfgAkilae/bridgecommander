@@ -13,12 +13,14 @@ typedef struct Config {
     int fixProxyInit;       /* NetworkAI first-frame time init */
     int noDeadband;         /* NetworkAI: correct small position errors too */
     float correctionGain;   /* NetworkAI position correction gain (1 = original 1/s) */
+    int smoothCorrection;   /* never correct a remote ship backwards faster than half its speed */
     float sendInterval;     /* near-range state update interval in s (original 0.1) */
     int retransmitMs;       /* resend interval for guaranteed messages (original 1000) */
     int torpedoAuthority;   /* MP clients show torpedo hits only when the host reports them */
     int latencyComp;        /* extrapolate remote ships by measured one-way latency */
     int maxLeadMs;          /* cap for latency compensation */
     int hostRelay;          /* host writes client ships from the received state, not its proxy */
+    int noScriptConsole;    /* script errors: log and continue instead of the blocking debug console */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
     int qpcRebase;          /* game clock relative to process start, not boot */
@@ -37,6 +39,7 @@ typedef struct Config {
     int emuLossPct10;       /* loss in 0.1 % */
     char pythonTick[64];    /* e.g. Local.Tick - called periodically from the frame loop */
     int pythonTickMs;
+    int pythonRedirect;     /* test mode: send Python stdout/stderr to BCMPFIX_PYLOG */
     double pythonTickDelay; /* seconds after start before the first tick */
     int statsIntervalSec;   /* log network stats every N seconds (0 = off) */
     int verbose;
@@ -81,3 +84,5 @@ void lead_install(void);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
 unsigned long relay_count(void);
+void scripterr_install(void);
+unsigned long scripterr_count(void);
