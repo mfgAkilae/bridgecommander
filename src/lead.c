@@ -80,6 +80,7 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
     BYTE *ai = NULL;
     float t0 = 0.0f;
     BYTE before[44];
+    float p0[3];
     int ms = 0;
     (void)edx;
     if (ship) {
@@ -95,6 +96,7 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
     }
     ((PFN_Reader)g_tramp)(ship, 0, msg);
     if (ai && *(float *)(ai + 0x2C) != t0) {
+        memcpy(p0, ai + 0x30, 12); /* received position, before latency compensation */
         ms = lead_get(*(DWORD *)((BYTE *)ship + 4));
         if (ms > 0 && g_cfg.latencyComp) {
             float s = *(float *)(ai + 0x54) * (ms / 1000.0f);
@@ -105,7 +107,7 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
         }
     }
     if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
-        orient_on_update(ai, g_cfg.latencyComp ? ms : 0);
+        orient_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
     if (ai && trace_active())
         trace_update(ship, ai, before, ms);
 }

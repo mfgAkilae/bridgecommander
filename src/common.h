@@ -15,6 +15,7 @@ typedef struct Config {
     float correctionGain;   /* NetworkAI position correction gain (1 = original 1/s) */
     int smoothCorrection;   /* never correct a remote ship backwards faster than half its speed */
     int orientationCorrection; /* turn remote ships towards the received orientation (time constant as position) */
+    int arcExtrapolation;   /* with orientationCorrection 2: extrapolate the position along the predicted turn */
     float sendInterval;     /* near-range state update interval in s (original 0.1) */
     int retransmitMs;       /* resend interval for guaranteed messages (original 1000) */
     int torpedoAuthority;   /* MP clients show torpedo hits only when the host reports them */
@@ -91,7 +92,8 @@ void lead_install(void);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
 unsigned long relay_count(void);
-void orient_on_update(BYTE *ai, int leadMs);
+void orient_on_update(BYTE *ai, int leadMs, const float *p0);
 int orient_predict(BYTE *ai, float *f, float *u);
+int orient_target(BYTE *ai, float *out);
 void scripterr_install(void);
 unsigned long scripterr_count(void);

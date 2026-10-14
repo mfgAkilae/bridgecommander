@@ -26,7 +26,8 @@ static struct {
     float gotAt;      /* local game time when the last update arrived */
     float w[3];       /* turn rate vector (axis * rad/s) */
     float lead;       /* latency compensation of that update, s */
-    int valid;
+    float p0[3];      /* received position (before latency compensation) */
+    int valid, hasPos;
 } g_ship[MAXSHIPS];
 
 static float game_time(void)
@@ -81,8 +82,9 @@ static void rotate(const float *v, const float *w, float t, float *out)
         out[i] = v[i] * c + kv[i] * s + k[i] * kd * (1.0f - c);
 }
 
-/* called by the state update reader hook after every update of this proxy */
-void orient_on_update(BYTE *ai, int leadMs)
+/* called by the state update reader hook after every update of this proxy that
+ * carried a position (p0: that position, before latency compensation) */
+void orient_on_update(BYTE *ai, int leadMs, const float *p0)
 {
     int i = slot_of(ai, 1);
     float *f = (float *)(ai + 0x3C), *u = (float *)(ai + 0x48);
@@ -91,6 +93,10 @@ void orient_on_update(BYTE *ai, int leadMs)
         return;
     g_ship[i].gotAt = game_time();
     g_ship[i].lead = leadMs > 0 ? leadMs / 1000.0f : 0.0f;
+    if (p0) {
+        memcpy(g_ship[i].p0, p0, 12);
+        g_ship[i].hasPos = 1;
+    }
     if (!g_ship[i].valid) {
         memcpy(g_ship[i].f, f, 12);
         memcpy(g_ship[i].u, u, 12);
@@ -144,5 +150,58 @@ int orient_predict(BYTE *ai, float *f, float *u)
         h = MAX_HORIZON;
     rotate(g_ship[i].f, g_ship[i].w, h, f);
     rotate(g_ship[i].u, g_ship[i].w, h, u);
+    return 1;
+}
+
+/* Arc extrapolation of the position (ArcExtrapolation=1, with OrientationCorrection=2):
+ * the received position moved along the predicted turn instead of a straight line,
+ * p(h) = p0 + speed * integral_0^h R(w t) f dt, h = latency compensation + age of the
+ * update. Closed form with unit axis k, rate r, phi = r h, f_par = k (k.f),
+ * f_perp = f - f_par:  f_par h + sin(phi)/r f_perp + (1 - cos(phi))/r (k x f_perp).
+ * Beyond MAX_HORIZON the ship continues straight in the direction reached there. */
+static void arc_offset(const float *f, const float *w, float h, float *out)
+{
+    float r = (float)sqrt(dot3(w, w)), k[3], kd, fpar[3], fperp[3], kxf[3], s, c;
+    int i;
+    if (r < 1e-4f || h <= 0.0f) {
+        for (i = 0; i < 3; i++)
+            out[i] = f[i] * (h > 0.0f ? h : 0.0f);
+        return;
+    }
+    for (i = 0; i < 3; i++)
+        k[i] = w[i] / r;
+    kd = dot3(k, f);
+    for (i = 0; i < 3; i++) {
+        fpar[i] = k[i] * kd;
+        fperp[i] = f[i] - fpar[i];
+    }
+    kxf[0] = k[1] * fperp[2] - k[2] * fperp[1];
+    kxf[1] = k[2] * fperp[0] - k[0] * fperp[2];
+    kxf[2] = k[0] * fperp[1] - k[1] * fperp[0];
+    s = (float)sin(r * h);
+    c = (float)cos(r * h);
+    for (i = 0; i < 3; i++)
+        out[i] = fpar[i] * h + fperp[i] * (s / r) + kxf[i] * ((1.0f - c) / r);
+}
+
+int orient_target(BYTE *ai, float *out)
+{
+    int i = slot_of(ai, 0), k;
+    float h, hc, off[3], fe[3], speed;
+    if (i < 0 || !g_ship[i].valid || !g_ship[i].hasPos)
+        return 0;
+    speed = *(float *)(ai + 0x54);
+    h = g_ship[i].lead + (game_time() - g_ship[i].gotAt);
+    if (h < 0.0f)
+        h = 0.0f;
+    hc = h > MAX_HORIZON ? MAX_HORIZON : h;
+    arc_offset(g_ship[i].f, g_ship[i].w, hc, off);
+    if (h > hc) {
+        rotate(g_ship[i].f, g_ship[i].w, hc, fe);
+        for (k = 0; k < 3; k++)
+            off[k] += fe[k] * (h - hc);
+    }
+    for (k = 0; k < 3; k++)
+        out[k] = g_ship[i].p0[k] + off[k] * speed;
     return 1;
 }

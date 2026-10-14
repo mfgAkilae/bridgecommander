@@ -71,10 +71,12 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
 {
     void **vt = *(void ***)ship;
     float *pos = ((PFN_GetPos)vt[0x94 / 4])(ship, 0);
-    float *target = (float *)(ai + 0x30), *fwd = (float *)(ai + 0x3C);
+    float *target = (float *)(ai + 0x30), *fwd = (float *)(ai + 0x3C), pf[3], pu[3];
     float speed = *(float *)(ai + 0x54);
     float e[3], m[3], n, along, k, back, newpos[3];
     int i;
+    if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && orient_predict(ai, pf, pu))
+        fwd = pf; /* direction of flight now, not one latency ago */
     for (i = 0; i < 3; i++)
         e[i] = target[i] - pos[i];
     n = (float)sqrt(fwd[0] * fwd[0] + fwd[1] * fwd[1] + fwd[2] * fwd[2]);
@@ -178,6 +180,12 @@ static void align_orientation(BYTE *ai, void *ship, float dt)
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
+    if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && ship) {
+        /* replace NetworkAI's straight-line target with the arc extrapolation */
+        float t[3];
+        if (orient_target((BYTE *)self, t))
+            memcpy((BYTE *)self + 0x30, t, 12);
+    }
     if (g_cfg.orientationCorrection && ship)
         align_orientation((BYTE *)self, ship, dt);
     if (g_cfg.smoothCorrection && ship) {
