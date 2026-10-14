@@ -23,12 +23,12 @@ NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel
 FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0, 'FixProxyFirstFrame': 0,
              'NoCorrectionDeadband': 0, 'CorrectionGainPercent': 100, 'StateUpdateIntervalMs': 100,
              'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'ResendIntervalMs': 1000, 'ScriptLayer': 0, 'TorpedoHitAuthority': 0,
-             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'SmoothCorrection': 0,
+             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'SmoothCorrection': 0, 'OrientationCorrection': 0,
              'MaxFPS': 0}
 FIXES_ON = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 1, 'FixDeltaBase': 1, 'FixProxyFirstFrame': 1,
             'NoCorrectionDeadband': 1, 'CorrectionGainPercent': 500, 'StateUpdateIntervalMs': 50,
             'TimerResolution1ms': 1, 'ClockFromProcessStart': 1, 'ResendIntervalMs': 300, 'ScriptLayer': 1, 'TorpedoHitAuthority': 1,
-            'LatencyCompensation': 1, 'HostRelayReceivedState': 1, 'NoScriptErrorConsole': 1, 'SmoothCorrection': 1,
+            'LatencyCompensation': 1, 'HostRelayReceivedState': 1, 'NoScriptErrorConsole': 1, 'SmoothCorrection': 1, 'OrientationCorrection': 1,
             'MaxFPS': 0}
 
 
@@ -100,6 +100,7 @@ def main():
             'BCMP_SPECIES': sp, 'BCMP_SYSTEM': '1', 'BCMP_AI': 'attack',
             'BCMP_TLOG': os.path.join(out, 'tlog_%s.txt' % role),
             'BCMPFIX_PYLOG': os.path.join(out, 'py_%s.log' % role),
+            'BCMPFIX_TRACE': os.path.join(out, 'trace_%s.txt' % role),
             # the host stays until the last client has quit
             'BCMP_QUIT_AFTER': str(a.seconds + (12 + stagger * (len(roles) - 1) if role == 'host' else 8)),
             'BCMP_SEED': str(seed),

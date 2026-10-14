@@ -56,6 +56,7 @@ double __cdecl sqrt(double); /* not <math.h>: its logf clashes with ours */
 
 typedef float *(__fastcall *PFN_GetPos)(void *obj, void *edx);
 typedef void(__fastcall *PFN_SetPos)(void *obj, void *edx, float *pos);
+typedef float *(__fastcall *PFN_GetVecOut)(void *obj, void *edx, float *out);
 
 static unsigned long g_heldBack; /* frames in which a backward correction was limited */
 
@@ -99,12 +100,86 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
     }
     for (i = 0; i < 3; i++)
         newpos[i] = pos[i] + (e[i] - along * m[i]) * k + m[i] * back;
+    if (trace_active()) {
+        float tmp[3], *nose = ((PFN_GetVecOut)vt[0xAC / 4])(ship, 0, tmp);
+        float lat2 = e[0] * e[0] + e[1] * e[1] + e[2] * e[2] - along * along;
+        tracef("C obj=%lu dt=%.4f along=%.3f lat=%.3f back=%.4f spd=%.2f nose.fwd=%.3f", *(DWORD *)((BYTE *)ship + 4), dt,
+               along, lat2 > 0.0f ? (float)sqrt(lat2) : 0.0f, back, speed,
+               nose[0] * m[0] + nose[1] * m[1] + nose[2] * m[2]);
+    }
     ((PFN_SetPos)vt[0x78 / 4])(ship, 0, newpos);
+}
+
+/* Orientation correction (OrientationCorrection=1): NetworkAI turns the proxy
+ * physically towards the received forward/up vectors (+0x3C/+0x48) and drives it
+ * along its own nose (SetSpeed). In sharp turns at low speed the proxy's nose lags
+ * the real ship by more than 90 degrees for seconds; the proxy then flies the wrong
+ * way and the position correction drags it back (rubber-banding, issue #17). Turn the
+ * proxy towards the received orientation with the position correction's time
+ * constant (AlignToVectors 0x004311F0, as NetworkAI does itself below 0.5 speed). */
+#define ADDR_ALIGN_TO_VECTORS 0x004311F0
+typedef void(__fastcall *PFN_Align)(void *obj, void *edx, float *fwd, float *up);
+
+static int norm3(float *v)
+{
+    float n = (float)sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+    if (n < 1e-4f)
+        return 0;
+    v[0] /= n;
+    v[1] /= n;
+    v[2] /= n;
+    return 1;
+}
+
+static void align_orientation(BYTE *ai, void *ship, float dt)
+{
+    void **vt = *(void ***)ship;
+    float *rf = (float *)(ai + 0x3C), *ru = (float *)(ai + 0x48);
+    float t1[3], t2[3], pf[3], pu[3], *nose, *up, f[3], u[3], k, d;
+    int i;
+    if (rf[0] * rf[0] + rf[1] * rf[1] + rf[2] * rf[2] < 0.25f || ru[0] * ru[0] + ru[1] * ru[1] + ru[2] * ru[2] < 0.25f)
+        return; /* nothing received yet */
+    nose = ((PFN_GetVecOut)vt[0xAC / 4])(ship, 0, t1);
+    up = ((PFN_GetVecOut)vt[0xB0 / 4])(ship, 0, t2);
+    k = dt * g_cfg.correctionGain;
+    if (k > 1.0f)
+        k = 1.0f;
+    if (g_cfg.orientationCorrection == 2 && orient_predict(ai, pf, pu)) {
+        /* mode 2: follow the received orientation, dead-reckoned with the estimated
+         * turn rate over latency + age of the update (orient.c) */
+        rf = pf;
+        ru = pu;
+    } else {
+        /* mode 1: only when the nose lags far behind. In ordinary turns the physical
+         * turning keeps rotating and so predicts the turn, while the received vectors
+         * are one latency old. No correction below 30 degrees, full from 60 degrees. */
+        d = (nose[0] * rf[0] + nose[1] * rf[1] + nose[2] * rf[2]) /
+            (float)sqrt((rf[0] * rf[0] + rf[1] * rf[1] + rf[2] * rf[2]) + 1e-12f);
+        if (d >= 0.866f)
+            return;
+        if (d > 0.5f)
+            k *= (0.866f - d) / 0.366f;
+    }
+    for (i = 0; i < 3; i++) {
+        f[i] = nose[i] + (rf[i] - nose[i]) * k;
+        u[i] = up[i] + (ru[i] - up[i]) * k;
+    }
+    if (!norm3(f)) /* nose exactly opposite: take the received vector */
+        for (i = 0; i < 3; i++)
+            f[i] = rf[i];
+    d = u[0] * f[0] + u[1] * f[1] + u[2] * f[2];
+    for (i = 0; i < 3; i++)
+        u[i] -= f[i] * d; /* orthogonal to the new forward vector */
+    if (!norm3(u) || !norm3(f))
+        return;
+    ((PFN_Align)ADDR_ALIGN_TO_VECTORS)(ship, 0, f, u);
 }
 
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
+    if (g_cfg.orientationCorrection && ship)
+        align_orientation((BYTE *)self, ship, dt);
     if (g_cfg.smoothCorrection && ship) {
         smooth_correct((BYTE *)self, ship, dt);
         return;
@@ -263,7 +338,8 @@ void netfix_install(void)
         patch_bytes(ADDR_NETAI_CTOR_TIME, "d9 5e 2c", "d9 5e 28", "NetworkAI first-frame time");
     if (g_cfg.noDeadband)
         patch_bytes(ADDR_NETAI_DEADBAND, "d8 1d a8 87 88 00", "d8 1d 58 8b 88 00", "NetworkAI no 0.5 deadband");
-    if ((g_cfg.correctionGain > 0 && g_cfg.correctionGain != 1.0f) || g_cfg.smoothCorrection)
+    if ((g_cfg.correctionGain > 0 && g_cfg.correctionGain != 1.0f) || g_cfg.smoothCorrection ||
+        g_cfg.orientationCorrection)
         redirect_call(ADDR_CALL_NETAI_CORRECT, (void *)hk_NetAICorrect, (void **)&o_NetAICorrect, ADDR_NETAI_CORRECT,
                       g_cfg.smoothCorrection ? "NetworkAI correction gain + no backward correction"
                                              : "NetworkAI correction gain");

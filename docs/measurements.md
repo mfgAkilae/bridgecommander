@@ -157,3 +157,38 @@ missing on all clients; shield/hull differed from the host on 3 and 12 matches.
   error) and `bcmpfix.log` contained the traceback.
 - With bcmpfix's script layer active, 0 of 70 joining clients hung (the race was not observed in
   those runs).
+
+## Issue #17: proxy orientation in sharp turns (v1.2.1)
+
+Traced on the clients (`TraceStateSec`, `tools/trace_view.py`): the backward steps of the host's ship
+came in bursts of a few seconds in which the proxy's nose pointed more than 90° away from the
+received forward vector (nose · forward −0.3 … −0.6). The host's ship had turned sharply at low speed;
+NetworkAI turns the proxy physically and drives it along its own nose, so the proxy flew the wrong
+way and the position correction dragged it back. In one run this happened right after the start,
+in another at 60–80 s, at the same moment for all clients.
+
+Variants of an orientation correction (`OrientationCorrection`), mean error / 95th percentile and
+backward steps:
+
+| Run | none (v1.2.0) | 1: threshold 30°/60° (v1.2.1) | full, no threshold | 2: turn-rate prediction |
+|---|---|---|---|---|
+| 2 players 60 ms, host ship | 0.57 / 0.93, 0.0 % | 0.35 / 0.45, 0.0 % | 0.32 / 0.73, 0.4 % | 0.33 / 0.85, 0.3 % |
+| 2 players 60 ms, client ship | 0.24 / 0.64, 0.0 % | 0.20 / 0.36, 0.0 % | 0.55 / 1.31, 0.3 % | 0.40 / 0.66, 0.0 % |
+| 2 players 150 ms, host ship | 0.47 / 0.97, 2.0 % | 0.30 / 0.53, 0.0 % | 0.24 / 0.72, 0.7 % | 0.49 / 1.32, 0.8 % |
+| 2 players 150 ms, client ship | 0.32 / 0.63, 0.0 % | 0.38 / 0.66, 0.0 % | 0.57 / 0.95, 0.0 % | 0.67 / 1.11, 0.0 % |
+| 6 players 60 ms, client views host | 0.58–0.62, 5.2–7.8 % | 0.37–0.38, 0.0 % | 0.30–0.91, 0.0 % | 0.38, 0.5–0.6 % |
+| 6 players 60 ms, host views client | 0.32–0.35, 0.0 % | 0.26–0.27, 0.0–0.1 % | 0.28–0.37, 0.1–0.2 % | 0.39–0.44, 0.1–0.2 % |
+| 6 players 60 ms, client views client | 0.44–0.48, 0.5–2.2 % | 0.44–0.51, 0.1–0.7 % | 0.52–0.66, 0.1–0.5 % | 0.53–0.68, 0.3 % |
+
+(6 players: two or three runs each, ranges shown.)
+
+- **Full correction** (always turn the proxy to the received vectors) removes the backward bursts but
+  makes ordinary turns worse: the received vectors are one latency old, while the physical turning
+  keeps rotating and so predicts the turn.
+- **Threshold 30°/60°** (v1.2.1 default) leaves turns below 30° to the physical turning and corrects
+  fully from 60°: no backward steps in any of these runs, and mostly lower errors.
+- **Turn-rate prediction** (estimate the rate from consecutive received forward vectors and their
+  sender times, rotate by latency + age of the update): the estimated rates match the real ones
+  (median 0.26 rad/s on both sides), but the predicted nose makes the proxy fly an arc while NetworkAI
+  still extrapolates the position in a straight line, so the correction pulls it sideways. It would
+  need curved position extrapolation as well (issue #11). Kept as experimental option 2.

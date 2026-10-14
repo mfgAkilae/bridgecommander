@@ -55,22 +55,48 @@ static int lead_get(DWORD objId)
     return 0;
 }
 
+typedef float *(__fastcall *PFN_GetVec)(void *obj, void *edx, float *out);
+typedef float *(__fastcall *PFN_GetPos)(void *obj, void *edx);
+
+/* trace line for one received state update: which NetworkAI fields the reader
+ * changed (1 target, 2 forward, 4 up, 8 speed, 16 sender time) and the proxy */
+static void trace_update(void *ship, BYTE *ai, const BYTE *before, int lead)
+{
+    void **vt = *(void ***)ship;
+    float tmp[3], *nose = ((PFN_GetVec)vt[0xAC / 4])(ship, 0, tmp);
+    float *pos = ((PFN_GetPos)vt[0x94 / 4])(ship, 0);
+    float *t = (float *)(ai + 0x30), *f = (float *)(ai + 0x3C), *u = (float *)(ai + 0x48);
+    int mask = (memcmp(before, ai + 0x30, 12) ? 1 : 0) | (memcmp(before + 12, ai + 0x3C, 12) ? 2 : 0) |
+               (memcmp(before + 24, ai + 0x48, 12) ? 4 : 0) | (memcmp(before + 36, ai + 0x54, 4) ? 8 : 0) |
+               (memcmp(before + 40, ai + 0x2C, 4) ? 16 : 0);
+    tracef("U obj=%lu st=%.3f mask=%d tgt %.2f %.2f %.2f fwd %.3f %.3f %.3f up %.3f %.3f %.3f spd %.2f lead %d "
+           "pos %.2f %.2f %.2f nose %.3f %.3f %.3f",
+           *(DWORD *)((BYTE *)ship + 4), *(float *)(ai + 0x2C), mask, t[0], t[1], t[2], f[0], f[1], f[2], u[0], u[1],
+           u[2], *(float *)(ai + 0x54), lead, pos[0], pos[1], pos[2], nose[0], nose[1], nose[2]);
+}
+
 static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
 {
     BYTE *ai = NULL;
     float t0 = 0.0f;
+    BYTE before[44];
+    int ms = 0;
     (void)edx;
     if (ship) {
         void *a = ((PFN_GetAI)ADDR_GET_AI)(ship, 0);
         if (a)
             ai = (BYTE *)((PFN_AsNetAI)ADDR_AS_NETWORK_AI)(a);
-        if (ai)
+        if (ai) {
             t0 = *(float *)(ai + 0x2C);
+            memcpy(before, ai + 0x30, 36); /* target, forward, up */
+            memcpy(before + 36, ai + 0x54, 4);
+            memcpy(before + 40, ai + 0x2C, 4);
+        }
     }
     ((PFN_Reader)g_tramp)(ship, 0, msg);
     if (ai && *(float *)(ai + 0x2C) != t0) {
-        int ms = lead_get(*(DWORD *)((BYTE *)ship + 4));
-        if (ms > 0) {
+        ms = lead_get(*(DWORD *)((BYTE *)ship + 4));
+        if (ms > 0 && g_cfg.latencyComp) {
             float s = *(float *)(ai + 0x54) * (ms / 1000.0f);
             float *target = (float *)(ai + 0x30), *fwd = (float *)(ai + 0x3C);
             target[0] += fwd[0] * s;
@@ -78,6 +104,10 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
             target[2] += fwd[2] * s;
         }
     }
+    if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
+        orient_on_update(ai, g_cfg.latencyComp ? ms : 0);
+    if (ai && trace_active())
+        trace_update(ship, ai, before, ms);
 }
 
 void lead_install(void)
@@ -85,7 +115,7 @@ void lead_install(void)
     static const BYTE prologue[7] = {0x6a, 0xff, 0x68, 0xd8, 0xb9, 0x87, 0x00}; /* push -1; push 0x87b9d8 */
     BYTE jmp[5];
     LONG rel;
-    if (!g_cfg.latencyComp)
+    if (!g_cfg.latencyComp && g_cfg.traceSec <= 0 && g_cfg.orientationCorrection != 2)
         return;
     if (memcmp((void *)ADDR_SHIP_READER, prologue, 7) != 0) {
         logf("PATCH latency compensation: prologue differs, NOT applied");

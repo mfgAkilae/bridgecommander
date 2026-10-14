@@ -14,6 +14,7 @@ typedef struct Config {
     int noDeadband;         /* NetworkAI: correct small position errors too */
     float correctionGain;   /* NetworkAI position correction gain (1 = original 1/s) */
     int smoothCorrection;   /* never correct a remote ship backwards faster than half its speed */
+    int orientationCorrection; /* turn remote ships towards the received orientation (time constant as position) */
     float sendInterval;     /* near-range state update interval in s (original 0.1) */
     int retransmitMs;       /* resend interval for guaranteed messages (original 1000) */
     int torpedoAuthority;   /* MP clients show torpedo hits only when the host reports them */
@@ -42,6 +43,7 @@ typedef struct Config {
     int pythonRedirect;     /* test mode: send Python stdout/stderr to BCMPFIX_PYLOG */
     double pythonTickDelay; /* seconds after start before the first tick */
     int statsIntervalSec;   /* log network stats every N seconds (0 = off) */
+    int traceSec;           /* trace state updates and corrections for N seconds (0 = off) */
     int verbose;
 } Config;
 
@@ -58,6 +60,11 @@ void logf(const char *fmt, ...);
 
 /* ---- time -------------------------------------------------------------- */
 double now_sec(void);
+DWORD qpc_ms(void);
+
+/* ---- state update trace ------------------------------------------------ */
+int trace_active(void);
+void tracef(const char *fmt, ...);
 
 /* ---- hooking ----------------------------------------------------------- */
 int mem_write(void *addr, const void *data, int len);
@@ -84,5 +91,7 @@ void lead_install(void);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
 unsigned long relay_count(void);
+void orient_on_update(BYTE *ai, int leadMs);
+int orient_predict(BYTE *ai, float *f, float *u);
 void scripterr_install(void);
 unsigned long scripterr_count(void);

@@ -66,6 +66,9 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
    (`RebuildInfoPane` before its panel exists).
 10. **Blocking script error console.** In windowed mode any script error opens the "TG Python
     Exception Debug Console" and the game waits for keyboard input there: it freezes.
+11. **Lagging proxy orientation.** Remote ships turn physically towards the reported direction and
+    are driven along their own nose. After a sharp turn at low speed the nose lags by more than 90°
+    for seconds, the ship flies the wrong way and is dragged back.
 
 What bcmpfix does about it:
 
@@ -81,6 +84,7 @@ What bcmpfix does about it:
 | 8 | the host relays the received, extrapolated state (position, forward/up, speed) (v1.1.0, orientation v1.2.0) |
 | 9 | the panel update is skipped while the panel does not exist (v1.2.0) |
 | 10 | script errors go to `bcmpfix.log`, the game continues as in fullscreen (v1.2.0) |
+| 11 | a remote ship whose nose lags more than 30° behind the reported direction is turned towards it (v1.2.1) |
 
 ## Verification
 
@@ -125,8 +129,6 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Tested with up to six players in one sandbox, not over the internet and not with a dedicated
   server (#13). Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
-- Some backward jerks of the host's ship remain in the clients' view during the first 40 s of some
-  six-player runs (#17).
 - A small lateral error remains during hard turns (extrapolation follows the forward vector only) (#11).
 - Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
   host-confirmed hit fails on the client and the hit is not shown there (#15; improved in

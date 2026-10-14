@@ -41,6 +41,7 @@ void config_load(void)
     g_cfg.noDeadband = ini_int(ini, "Fixes", "NoCorrectionDeadband", 1);
     g_cfg.correctionGain = ini_int(ini, "Fixes", "CorrectionGainPercent", 500) / 100.0f;
     g_cfg.smoothCorrection = ini_int(ini, "Fixes", "SmoothCorrection", 1);
+    g_cfg.orientationCorrection = ini_int(ini, "Fixes", "OrientationCorrection", 1);
     g_cfg.sendInterval = ini_int(ini, "Fixes", "StateUpdateIntervalMs", 50) / 1000.0f;
     g_cfg.retransmitMs = ini_int(ini, "Fixes", "ResendIntervalMs", 300);
     g_cfg.torpedoAuthority = ini_int(ini, "Fixes", "TorpedoHitAuthority", 1);
@@ -72,6 +73,7 @@ void config_load(void)
     g_cfg.pythonRedirect = ini_int(ini, "Test", "PythonRedirect", 1);
     g_cfg.pythonTickDelay = ini_int(ini, "Test", "PythonTickDelayMs", 6000) / 1000.0;
     g_cfg.statsIntervalSec = ini_int(ini, "Debug", "NetStatsSec", 0);
+    g_cfg.traceSec = ini_int(ini, "Debug", "TraceStateSec", ini_int(ini, "Test", "TraceStateSec", 0));
     g_cfg.verbose = ini_int(ini, "Debug", "Verbose", 0);
 
     logf("config %s: StateUpdateHz=%d AlwaysAbsolute=%d DeltaBase=%d ProxyInit=%d NoDeadband=%d Gain=%.2f "
@@ -109,6 +111,58 @@ void logf(const char *fmt, ...)
     fputc('\n', g_log);
     fflush(g_log);
     LeaveCriticalSection(&g_logLock);
+}
+
+/* ---- state update trace (TraceStateSec) ---------------------------------- */
+/* Lines start with QPC milliseconds since boot (same clock as bcmpdll.ms() and the
+ * test telemetry). The trace runs for TraceStateSec seconds after its first line. */
+static FILE *g_trace;
+static int g_traceState; /* 0 = not started, 1 = running, 2 = done */
+static DWORD g_traceEnd;
+
+DWORD qpc_ms(void)
+{
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c);
+    QueryPerformanceFrequency(&f);
+    return (DWORD)((c.QuadPart / (f.QuadPart / 1000)) & 0x7fffffff);
+}
+
+int trace_active(void)
+{
+    if (g_cfg.traceSec <= 0 || g_traceState == 2)
+        return 0;
+    if (g_traceState == 0) {
+        const char *p = getenv("BCMPFIX_TRACE");
+        char path[MAX_PATH];
+        if (p && *p)
+            lstrcpynA(path, p, MAX_PATH);
+        else
+            _snprintf(path, MAX_PATH, "%s\\bcmpfix_trace.log", g_gameDir);
+        g_trace = fopen(path, "w");
+        g_traceState = g_trace ? 1 : 2;
+        g_traceEnd = qpc_ms() + (DWORD)g_cfg.traceSec * 1000;
+        return g_traceState == 1;
+    }
+    if ((int)(qpc_ms() - g_traceEnd) > 0) {
+        fclose(g_trace);
+        g_trace = NULL;
+        g_traceState = 2;
+        return 0;
+    }
+    return 1;
+}
+
+void tracef(const char *fmt, ...)
+{
+    va_list ap;
+    if (!g_trace)
+        return;
+    fprintf(g_trace, "%lu ", qpc_ms());
+    va_start(ap, fmt);
+    vfprintf(g_trace, fmt, ap);
+    va_end(ap);
+    fputc('\n', g_trace);
 }
 
 /* ---- memory patching ---------------------------------------------------- */
