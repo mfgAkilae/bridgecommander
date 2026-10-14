@@ -56,6 +56,8 @@ def main():
     ap.add_argument('--species', default='1,2')
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--set', action='append', default=[], help='override a [Fixes] key, e.g. CorrectionGainPercent=300')
+    ap.add_argument('--set-host', action='append', default=[], help='like --set, host only')
+    ap.add_argument('--set-client', action='append', default=[], help='like --set, client only')
     a = ap.parse_args()
     if not IN_SANDBOX and os.environ.get('BCMP_ALLOW_HOST') != '1':
         sys.exit('refusing to start the game outside Windows Sandbox (set BCMP_ALLOW_HOST=1 to override)')
@@ -73,7 +75,8 @@ def main():
         ini = os.path.join(out, 'bcmpfix_%s.ini' % role)
         write_ini(ini, a.fixes, a.rate,
                   {'x': x, 'y': y, 'lat': a.latency, 'jit': a.jitter, 'loss': a.loss,
-                   'bind': HOST_ADDR if role == 'host' else '127.0.0.1', 'set': a.set})
+                   'bind': HOST_ADDR if role == 'host' else '127.0.0.1',
+                   'set': a.set + (a.set_host if role == 'host' else a.set_client)})
         env = dict(os.environ)
         env.update({
             'BCMPFIX_INI': ini,

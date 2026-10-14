@@ -69,16 +69,23 @@ def analyze(run):
         if os.path.exists(p):
             logs[role] = load(p)
     print('=== %s (%s)' % (os.path.basename(run), ', '.join(logs)))
-    owners = {}
+    # owner = the instance that logs the ship as local most often (names can be
+    # briefly attached to the wrong object around a respawn)
+    owners, nlocal = {}, {}
     for role, (ships, *_rest) in logs.items():
         for name, tr in ships.items():
-            if any(x[4] for x in tr):
-                owners[name] = role
+            n = sum(1 for x in tr if x[4])
+            if n > nlocal.get(name, 0):
+                owners[name], nlocal[name] = role, n
     for name, owner in sorted(owners.items()):
         ref = [x for x in logs[owner][0][name] if x[4]]
+        # skip 16 s after each death of this ship (respawn moves it legitimately)
+        dead_ts = [d[0] for lg in logs.values() for d in lg[2] if d[1] == name]
         # own ship: any teleport in the owner's own view?
         own_jumps = 0
         for a, b in zip(ref, ref[1:]):
+            if any(0 <= b[0] - dt0 < 16000 for dt0 in dead_ts):
+                continue
             dt = (b[0] - a[0]) / 1000.0
             speed = max(math.sqrt(sum(c * c for c in a[2])), 1.0)
             if dt > 0 and dist(a[1], b[1]) > 3 * speed * dt + 2.0:
@@ -91,8 +98,6 @@ def analyze(run):
             errs, jumps = [], 0
             ahead = []  # signed error along the owner's velocity: + = remote view is ahead
             prev = None
-            # skip 6 s after each death of this ship (respawn moves it legitimately)
-            dead_ts = [d[0] for lg in logs.values() for d in lg[2] if d[1] == name]
             for t, pos, vel, hull, local in ships[name]:
                 if any(0 <= t - dt0 < 16000 for dt0 in dead_ts):
                     prev = None

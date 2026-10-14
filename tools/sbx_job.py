@@ -26,6 +26,8 @@ def main():
     ap.add_argument('--nowait', action='store_true')
     ap.add_argument('--nodll', action='store_true')
     ap.add_argument('--set', action='append', default=[])
+    ap.add_argument('--set-host', action='append', default=[])
+    ap.add_argument('--set-client', action='append', default=[])
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
     a = ap.parse_args()
     alive = os.path.join(SBX, 'agent_alive.txt')

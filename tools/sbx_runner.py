@@ -73,8 +73,9 @@ def run_job(path, status):
             args += ['--' + k, str(job[k])]
     if job.get('solo'):
         args.append('--solo')
-    for kv in job.get('set', []):
-        args += ['--set', kv]
+    for opt in ('set', 'set_host', 'set_client'):
+        for kv in job.get(opt, []):
+            args += ['--' + opt.replace('_', '-'), kv]
     env = dict(os.environ)
     env['BCMP_GAME'] = GAME
     env['BCMP_RUNS'] = RUNS
