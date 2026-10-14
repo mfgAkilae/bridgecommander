@@ -1,11 +1,14 @@
-"""Build the release archive from a fresh build.
+"""Build the release files from a fresh build.
 
 Usage: python -I tools/make_release.py <version>
-Needs out\\dinput.dll (run build.cmd first). Writes dist\\bcmpfix-<version>.zip and
-dist\\SHA256SUMS.txt. The archive unpacks directly into the game folder.
+Needs out\\dinput.dll and out\\BC_MP_fix.exe (run build.cmd, then installer\\build.cmd).
+Writes dist\\BC_MP_fix.exe (installer), dist\\bcmpfix-<version>.zip (unpacks directly into the
+game folder) and dist\\SHA256SUMS.txt.
 """
 import hashlib
 import os
+import re
+import shutil
 import sys
 import zipfile
 
@@ -27,6 +30,12 @@ def main():
     if len(sys.argv) != 2:
         sys.exit(__doc__)
     ver = sys.argv[1]
+    hv = re.search(r'#define BCMPFIX_VERSION "([^"]+)"', open(os.path.join(ROOT, 'installer', 'version.h')).read())
+    if not hv or hv.group(1) != ver:
+        sys.exit('installer/version.h says %s, not %s' % (hv.group(1) if hv else '?', ver))
+    exe = os.path.join(ROOT, 'out', 'BC_MP_fix.exe')
+    if not os.path.exists(exe) or os.path.getmtime(exe) < os.path.getmtime(os.path.join(ROOT, 'out', 'dinput.dll')):
+        sys.exit('out\\BC_MP_fix.exe missing or older than out\\dinput.dll - run installer\\build.cmd')
     dist = os.path.join(ROOT, 'dist')
     os.makedirs(dist, exist_ok=True)
     zpath = os.path.join(dist, 'bcmpfix-%s.zip' % ver)
@@ -36,8 +45,10 @@ def main():
             if not os.path.exists(p):
                 sys.exit('missing %s' % src)
             z.write(p, dst)
+    shutil.copyfile(exe, os.path.join(dist, 'BC_MP_fix.exe'))
     dll = os.path.join(ROOT, 'out', 'dinput.dll')
-    sums = ['%s  %s' % (sha256(zpath), os.path.basename(zpath)), '%s  dinput.dll' % sha256(dll)]
+    sums = ['%s  BC_MP_fix.exe' % sha256(exe), '%s  %s' % (sha256(zpath), os.path.basename(zpath)),
+            '%s  dinput.dll' % sha256(dll)]
     open(os.path.join(dist, 'SHA256SUMS.txt'), 'w', newline='\n').write('\n'.join(sums) + '\n')
     print('\n'.join(sums))
 

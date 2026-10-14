@@ -15,9 +15,24 @@ No game files are included. You need your own copy of the game.
 
 ## Installation
 
-See [`release/README.md`](release/README.md). In short: copy `dinput.dll`, `bcmpfix.ini` and
-`scripts\bcmpfix_mp.py` into the game folder of **every** player. The DLL is a proxy for
-`dinput.dll`; it patches the game in memory at start-up and does not change any game files.
+**Every** player installs the fix, the host above all.
+
+1. Download `BC_MP_fix.exe` from the [latest release](https://github.com/mfgAkilae/bridgecommander/releases/latest).
+2. Run it. It finds the game (next to the installer, in the current folder, via the registry
+   entries of the Activision and GOG installers, or by asking), checks that `stbc.exe` is
+   version 1.1 and installs the fix. You can also drag `stbc.exe` onto `BC_MP_fix.exe`.
+3. Run it again to update or uninstall. Uninstalling restores another mod's `dinput.dll` if the
+   installer had to move it aside.
+
+The installer is not signed, so Windows SmartScreen may warn ("More info" → "Run anyway"). It asks
+for administrator rights only when the game folder is write-protected (for example under
+`Program Files`). Command line: `BC_MP_fix.exe [<game folder>] [--install | --uninstall] [--quiet]
+[--force] [--log <file>]`; exit codes 0 = done, 1 = error, 2 = cancelled, 3 = unsupported
+`stbc.exe` (with `--quiet`, unless `--force`).
+
+Manual installation: unpack `bcmpfix-<version>.zip` into the game folder, see
+[`release/README.md`](release/README.md). The DLL is a proxy for `dinput.dll`; it patches the game in
+memory at start-up and does not change any game files.
 
 ## How BC multiplayer works
 
@@ -105,6 +120,9 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 ## Repository layout
 
 - `src/`, `build.cmd` – the DLL (C, MSVC x86). `build.cmd` writes `out\dinput.dll`.
+- `installer/` – `BC_MP_fix.exe` (C, Win32): finds the game, checks `stbc.exe`, installs, updates
+  or removes the fix; the mod files are embedded as resources. `installer\build.cmd` writes
+  `out\BC_MP_fix.exe` (run `build.cmd` first), `tools/make_release.py` collects the release files.
 - `scripts/bcmpfix_mp.py` – the script layer (Python 1.5): pings, latency compensation, torpedo hit
   reports and replay.
 - `release/` – player README and default `bcmpfix.ini`.

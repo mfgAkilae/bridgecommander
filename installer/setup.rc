@@ -1,0 +1,40 @@
+#include <winver.h>
+#include "setup_res.h"
+#include "version.h"
+
+/* payload: the files that go into the game folder (paths relative to installer\) */
+IDR_DLL RCDATA "..\\out\\dinput.dll"
+IDR_SCRIPT RCDATA "..\\scripts\\bcmpfix_mp.py"
+IDR_INI RCDATA "..\\release\\bcmpfix.ini"
+IDR_README RCDATA "..\\release\\README.md"
+
+1 24 "setup.manifest"
+
+VS_VERSION_INFO VERSIONINFO
+FILEVERSION BCMPFIX_VERSION_RC
+PRODUCTVERSION BCMPFIX_VERSION_RC
+FILEFLAGSMASK 0x3fL
+FILEFLAGS 0x0L
+FILEOS VOS_NT_WINDOWS32
+FILETYPE VFT_APP
+FILESUBTYPE 0x0L
+BEGIN
+    BLOCK "StringFileInfo"
+    BEGIN
+        BLOCK "040904b0"
+        BEGIN
+            VALUE "CompanyName", "mfgAkilae"
+            VALUE "FileDescription", "Bridge Commander multiplayer fix installer"
+            VALUE "FileVersion", BCMPFIX_VERSION
+            VALUE "InternalName", "BC_MP_fix"
+            VALUE "LegalCopyright", "MIT License, https://github.com/mfgAkilae/bridgecommander"
+            VALUE "OriginalFilename", "BC_MP_fix.exe"
+            VALUE "ProductName", "bcmpfix"
+            VALUE "ProductVersion", BCMPFIX_VERSION
+        END
+    END
+    BLOCK "VarFileInfo"
+    BEGIN
+        VALUE "Translation", 0x409, 1200
+    END
+END

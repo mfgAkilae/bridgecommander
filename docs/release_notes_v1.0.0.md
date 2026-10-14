@@ -5,14 +5,17 @@ Fixes rubber-banding, teleporting ships and torpedo hits that only one player se
 
 ### How to install (Windows)
 
-1. Download **`bcmpfix-1.0.0.zip`**.
-2. Unpack it into your Bridge Commander game folder (where `stbc.exe` is). This puts `dinput.dll` and
-   `bcmpfix.ini` next to `stbc.exe` and `bcmpfix_mp.py` into the `scripts` folder.
-3. Start the game as usual. `bcmpfix.log` in the game folder lists every fix with `applied`.
-4. **Every player should install it, the host above all.** Players without the fix can still join, but
+1. Download **`BC_MP_fix.exe`** and run it. It finds your Bridge Commander folder (or asks for it),
+   checks that `stbc.exe` is version 1.1 and installs the fix. You can also drag `stbc.exe` onto it.
+2. Start the game as usual. `bcmpfix.log` in the game folder lists every fix with `applied`.
+3. **Every player should install it, the host above all.** Players without the fix can still join, but
    they keep the original behaviour.
 
-To undo: delete `dinput.dll`, `bcmpfix.ini` and `scripts\bcmpfix_mp.py`.
+To update or undo: run `BC_MP_fix.exe` again and choose *Update* or *Uninstall*. The installer is not
+signed, so Windows SmartScreen may warn ("More info" → "Run anyway").
+
+Manual alternative: unpack **`bcmpfix-1.0.0.zip`** into the game folder (where `stbc.exe` is). To undo,
+delete `dinput.dll`, `bcmpfix.ini` and `scripts\bcmpfix_mp.py`.
 
 Requires `stbc.exe` version 1.1. The fix checks the original bytes before each change; on another
 version it logs `NOT applied` and leaves that part of the game unchanged. No game files are included

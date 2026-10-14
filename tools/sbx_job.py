@@ -29,12 +29,15 @@ def main():
     ap.add_argument('--set-host', action='append', default=[])
     ap.add_argument('--set-client', action='append', default=[])
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
+    ap.add_argument('--steps', default='', help='JSON file with program steps instead of a game run (see sbx_runner)')
     a = ap.parse_args()
     alive = os.path.join(SBX, 'agent_alive.txt')
     if not os.path.exists(alive) or time.time() - os.path.getmtime(alive) > 30:
         sys.exit('sandbox agent not running (start bc-test.wsb)')
-    job = {k: v for k, v in vars(a).items() if k not in ('nowait', 'shots')}
+    job = {k: v for k, v in vars(a).items() if k not in ('nowait', 'shots', 'steps')}
     job['shots'] = [int(x) for x in a.shots.split(',') if x]
+    if a.steps:
+        job['steps'] = json.load(open(a.steps))
     tmp = os.path.join(SBX, 'jobs', a.name + '.tmp')
     json.dump(job, open(tmp, 'w'))
     os.replace(tmp, os.path.join(SBX, 'jobs', a.name + '.json'))

@@ -10,7 +10,11 @@ The mod is a DLL that loads as `dinput.dll` when the game starts, plus a small P
 
 ## Installation
 
-**All players** install the mod, the host above all. Unpack the release archive into the game folder, which is the folder that contains `stbc.exe`. This puts the files here:
+**All players** install the mod, the host above all.
+
+**With the installer:** run `BC_MP_fix.exe`. It finds the game folder (or asks for it), checks `stbc.exe` and installs the files. Run it again to update or uninstall.
+
+**By hand:** unpack the release archive `bcmpfix-<version>.zip` into the game folder, which is the folder that contains `stbc.exe`. This puts the files here:
 
 | File | Destination |
 |---|---|
@@ -20,7 +24,7 @@ The mod is a DLL that loads as `dinput.dll` when the game starts, plus a small P
 
 Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each fix that is active appears there with `applied`.
 
-**Uninstall:** delete the three files. The archive also contains this README (`bcmpfix_README.md`) and the license (`bcmpfix_LICENSE.txt`); they are not needed by the game.
+**Uninstall:** run `BC_MP_fix.exe` and choose *Uninstall*, or delete the three files. The archive also contains this README (`bcmpfix_README.md`) and the license (`bcmpfix_LICENSE.txt`); they are not needed by the game.
 
 ### Requirements and compatibility
 

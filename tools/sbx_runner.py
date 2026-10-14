@@ -62,10 +62,42 @@ def initial_sync(status):
     status('initial copy %d files' % sync_game(status))
 
 
+def run_steps(job, status):
+    """Run other programs (e.g. the installer) step by step with screenshots; no game run.
+
+    job['steps']: [{'pre': [shell commands], 'cmd': [argv], 'cwd': dir, 'seconds': N,
+                    'title': window title substring, 'shots': [seconds]}]
+    """
+    out = os.path.join(RUNS, job['name'])
+    os.makedirs(out, exist_ok=True)
+    with open(os.path.join(out, 'steps_output.txt'), 'w') as log:
+        for i, st in enumerate(job['steps']):
+            for c in st.get('pre', []):
+                r = subprocess.run(c, shell=True, capture_output=True, text=True)
+                log.write('step %d pre %s -> rc=%s %s %s\n' % (i, c, r.returncode, r.stdout.strip(), r.stderr.strip()))
+            p = subprocess.Popen(st['cmd'], cwd=st.get('cwd'))
+            t0 = time.time()
+            shots = sorted(st.get('shots', []))
+            while p.poll() is None and time.time() - t0 < st.get('seconds', 10):
+                if shots and time.time() - t0 >= shots[0]:
+                    sec = shots.pop(0)
+                    subprocess.run([sys.executable, '-I', os.path.join(TOOLS, 'wincap.py'), st.get('title', ''),
+                                    os.path.join(out, 'step%d_%02d.png' % (i, sec))], capture_output=True, timeout=20)
+                time.sleep(0.2)
+            if p.poll() is None:
+                p.kill()
+                p.wait()
+            log.write('step %d rc=%s cmd=%s\n' % (i, p.returncode, st['cmd']))
+            log.flush()
+    status('job %s done rc=steps' % job['name'])
+
+
 def run_job(path, status):
     job = json.load(open(path))
     name = job['name']
     status('job %s start %s' % (name, job))
+    if job.get('steps'):
+        return run_steps(job, status)
     status('synced %d files' % sync_game(status))
     args = [sys.executable, '-I', os.path.join(TOOLS, 'mptest.py'), name]
     for k in ('seconds', 'fixes', 'rate', 'latency', 'jitter', 'loss', 'species'):
