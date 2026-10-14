@@ -190,5 +190,29 @@ backward steps:
 - **Turn-rate prediction** (estimate the rate from consecutive received forward vectors and their
   sender times, rotate by latency + age of the update): the estimated rates match the real ones
   (median 0.26 rad/s on both sides), but the predicted nose makes the proxy fly an arc while NetworkAI
-  still extrapolates the position in a straight line, so the correction pulls it sideways. It would
-  need curved position extrapolation as well (issue #11). Kept as experimental option 2.
+  still extrapolates the position in a straight line, so the correction pulls it sideways. Kept as
+  experimental option 2.
+
+**Arc extrapolation (`ArcExtrapolation=1` with option 2).** The position is extrapolated along the
+predicted turn as well: p = p0 + speed · ∫ R(ω t) f dt over latency + age of the update (closed form,
+checked against numerical integration). Same settings, mean error / 95th percentile and backward
+steps:
+
+| Run | threshold 30°/60° | prediction | prediction + arc |
+|---|---|---|---|
+| 2 players 60 ms, host ship | 0.35 / 0.45, 0.0 % | 0.33 / 0.85, 0.3 % | 0.32 / 0.66, 0.0 % |
+| 2 players 60 ms, client ship | 0.20 / 0.36, 0.0 % | 0.40 / 0.66, 0.0 % | 0.44 / 0.72, 0.0 % |
+| 2 players 150 ms, host ship | 0.30 / 0.53, 0.0 % | 0.49 / 1.32, 0.8 % | 0.47 / 1.00, 0.0 % |
+| 2 players 150 ms, client ship | 0.38 / 0.66, 0.0 % | 0.67 / 1.11, 0.0 % | 0.62 / 1.03, 0.0 % |
+| 6 players: client views host | 0.37–0.38, 0.0–0.5 % | 0.38, 0.5–0.6 % | 0.31–0.33, 0.0–1.2 % |
+| 6 players: host views client | 0.25–0.27, 0.0–0.3 % | 0.39–0.44, 0.1–0.2 % | 0.34–0.35, 0.1–0.3 % |
+| 6 players: client views client | 0.44–0.51, 0.1–0.7 % | 0.53–0.68, 0.3 % | 0.59–0.62, 0.2–0.3 % |
+
+The arc helps the prediction, but the threshold variant stays better except for the clients' view of
+the host's ship. The reason is drift: in turns a BC ship's velocity lags its nose. Angle between the
+nose a peer reported and the owner's actual velocity (run r17a, speed above 2 units/s): median 6°
+(Warbird) to 23° (Vor'cha), 90th percentile up to 56° (Ambassador) and 62° (Vor'cha). Any
+extrapolation along the nose, straight or curved, is wrong in turns; the proxy's own physics (same
+ship class) reproduces the drift as long as its orientation is left alone. A better position
+extrapolation would follow the velocity estimated from successive received positions instead of the
+nose.
