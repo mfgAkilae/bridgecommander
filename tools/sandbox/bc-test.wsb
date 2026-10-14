@@ -1,0 +1,34 @@
+<Configuration>
+  <VGpu>Enable</VGpu>
+  <Networking>Disable</Networking>
+  <AudioInput>Disable</AudioInput>
+  <VideoInput>Disable</VideoInput>
+  <ClipboardRedirection>Disable</ClipboardRedirection>
+  <PrinterRedirection>Disable</PrinterRedirection>
+  <MemoryInMB>8192</MemoryInMB>
+  <MappedFolders>
+    <MappedFolder>
+      <HostFolder>C:\path\to\game</HostFolder>
+      <SandboxFolder>C:\bcsrc\game</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\path\to\repo\tools</HostFolder>
+      <SandboxFolder>C:\bcsrc\tools</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\path\to\Python310</HostFolder>
+      <SandboxFolder>C:\py</SandboxFolder>
+      <ReadOnly>true</ReadOnly>
+    </MappedFolder>
+    <MappedFolder>
+      <HostFolder>C:\path\to\sbx</HostFolder>
+      <SandboxFolder>C:\sbx</SandboxFolder>
+      <ReadOnly>false</ReadOnly>
+    </MappedFolder>
+  </MappedFolders>
+  <LogonCommand>
+    <Command>C:\py\python.exe -I C:\bcsrc\tools\sbx_agent.py</Command>
+  </LogonCommand>
+</Configuration>

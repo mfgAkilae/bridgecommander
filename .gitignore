@@ -1,0 +1,25 @@
+# game files and anything derived from the copyrighted game are not part of this repository
+*.exe
+*.dll
+*.pyc
+*.iso
+*.img
+*.ccd
+*.sub
+*.cab
+*.hdr
+ghidra_proj/
+decomp*.c
+decomp*.idx
+# build output
+/out/
+/obj/
+*.obj
+*.pdb
+*.lib
+*.exp
+*.ilk
+# test bed output
+runs/
+shots/
+__pycache__/
