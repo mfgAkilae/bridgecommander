@@ -10,7 +10,7 @@ The mod is a DLL that loads as `dinput.dll` when the game starts, plus a small P
 
 ## Installation
 
-**All players** install the mod, the host above all. Copy these files into the game folder, which is the folder that contains `stbc.exe`:
+**All players** install the mod, the host above all. Unpack the release archive into the game folder, which is the folder that contains `stbc.exe`. This puts the files here:
 
 | File | Destination |
 |---|---|
@@ -20,7 +20,7 @@ The mod is a DLL that loads as `dinput.dll` when the game starts, plus a small P
 
 Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each fix that is active appears there with `applied`.
 
-**Uninstall:** delete the three files.
+**Uninstall:** delete the three files. The archive also contains this README (`bcmpfix_README.md`) and the license (`bcmpfix_LICENSE.txt`); they are not needed by the game.
 
 ### Requirements and compatibility
 
@@ -62,9 +62,16 @@ You can turn off each fix separately in `bcmpfix.ini`. The file has comments.
 
 ## Measurements
 
-Two scripted players fight a duel, 180 s per run. Network conditions are simulated (latency and loss apply per direction). The final report has the details.
+Two scripted players fight a duel, 180 s per run. Network conditions are simulated (latency and loss apply per direction). Details: `docs/measurements.md` in the repository https://github.com/mfgAkilae/bridgecommander.
 
-MEASUREMENTS
+| Network (per direction) | Position error, original | Position error, bcmpfix | Torpedo hits seen by one player only, original / bcmpfix |
+|---|---|---|---|
+| 0 ms | 3.03 / 1.48 | 0.59 / 0.26 | 3 of 5 / 0 of 7 |
+| 60 ms ±20 ms, 1 % loss | 3.40 / 2.44 | 0.53 / 0.18 | 7 of 15 / 0 of 5 |
+| 100 ms ±40 ms, 3 % loss | 4.38 / 2.10 | 0.45 / 0.23 | 8 of 12 / 0 of 5 |
+| 150 ms ±50 ms, 5 % loss | 4.55 / 2.49 | 0.60 / 0.32 | 4 of 7 / 0 of 4 |
+
+Position error: mean distance in game units between where a ship really is and where the other player sees it (host ship / client ship); the ships fly at about 4–6 units/s. The worst single error in the original runs was 41 units (a teleport), with bcmpfix 1.6 units.
 
 ## Troubleshooting
 

@@ -66,27 +66,41 @@ Both instances log their own and the remote ship's position every 100 ms; `tools
 compares them. The DLL's test mode simulates latency, jitter and packet loss per direction.
 
 Position error = distance between where a ship is on its owner's machine and where the other player
-sees it at the same time, in game units (ships fly at about 5 units/s). Development runs, 180 s each:
+sees it at the same time, in game units (ships fly at about 4–6 units/s). Mean error, one 180 s duel
+per row; latency, jitter and loss apply per direction:
 
-| Network | Original (host ship / client ship) | Movement fixes | + latency compensation |
-|---|---|---|---|
-| 0 ms | 3.62 / 1.74 | 0.62 / 0.26 | – |
-| 60 ms ±20, 1 % loss | 3.39 / 1.67 | 0.93 / 0.50 | 0.53 / 0.19 |
-| 100 ms ±40, 3 % loss | 4.26 / 2.18 | 1.02 / 0.52 | 0.46–0.58 / 0.24–0.25 |
+| Network | Original: host ship / client ship | bcmpfix: host ship / client ship |
+|---|---|---|
+| 0 ms | 3.03 / 1.48 | 0.59 / 0.26 |
+| 60 ms ±20 ms, 1 % loss | 3.40 / 2.44 | 0.53 / 0.18 |
+| 100 ms ±40 ms, 3 % loss | 4.38 / 2.10 | 0.45 / 0.23 |
+| 150 ms ±50 ms, 5 % loss | 4.55 / 2.49 | 0.60 / 0.32 |
 
-Torpedo hits: in the original, about 40 % of the hits were seen by only one player. With host
-authority: 7 of 7 hits consistent at 60 ms, 8 of 9 at 100 ms with 3 % loss (the 9th hit was still
-being replayed when the test ended).
+- The mean error drops by 80–93 %. The largest error in any bcmpfix run was 1.61 units; the original
+  reached 17 units at 60 ms and 41 units (a teleport) at 150 ms.
+- Remote ships lagged 0.8–2.9 units behind their real position in the original and 0.02–0.21 units
+  with bcmpfix.
+- Torpedo hits: in the original runs, 22 of 39 hits were seen by only one player. With bcmpfix all 21
+  hits were seen by both, with the same shield/hull result. Clients showed them 126–305 ms (mean per
+  run) after the host.
+
+Full table and method: [`docs/measurements.md`](docs/measurements.md).
 
 ## Open points
 
-- Only tested with two players (one host, one client).
-- A small lateral error remains during hard turns (extrapolation follows the forward vector only).
-- Clients show a torpedo hit about one latency after the host.
+Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
+
+- Only tested with two players (one host, one client) (#13). With three or more players the host
+  relays its smoothed proxy of a client's ship (#10).
+- A small lateral error remains during hard turns (extrapolation follows the forward vector only) (#11).
+- Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
+  host-confirmed hit fails on the client and the hit is not shown there (2 of 30 in tests, #15).
+- Torpedo flight paths still differ between players: swapped flag bits (#8) and different guidance
+  parameters on MP receivers (#9). The hit outcome is the host's.
 - Peers without the mod keep the original behaviour. Torpedo authority turns on only when the host
   runs the mod (the client waits for an answer to its ping).
-- Developed with a DRM-free `stbc.exe` 1.1. Other executables are untested; if the expected bytes
-  differ, the DLL logs `NOT applied` and leaves that part of the game unchanged.
+- Developed with a DRM-free `stbc.exe` 1.1. Other executables are untested (#14); if the expected
+  bytes differ, the DLL logs `NOT applied` and leaves that part of the game unchanged.
 
 ## Repository layout
 
