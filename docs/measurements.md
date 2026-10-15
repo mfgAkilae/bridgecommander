@@ -429,3 +429,96 @@ Lateral error in turns of 0.3–0.6 rad/s 0.035–0.048 units; nose angle median
 with `VirtualQuery` instead of `IsBadReadPtr`, otherwise the same): 2 players at 150 ms 0.10 / 0.21
 and 0.06 / 0.13; kick test peak error median 3.2, 90th percentile 4.2, max 7.5 units; two join tests
 with every ship visible on every client. No crashes in any of these runs.
+
+## Issue #12: torpedo hits without the latency (v1.5.0)
+
+`tools/hitlag.py` matches every torpedo hit of the host with the hit each client shows (same
+target, within 1.5 s) and with the hit on the shooter's own machine (`src=` in the hit lines of the
+test pilot). Six players, 180 s, 60 ms ±20 ms, 1 % loss; median (10th / 90th percentile).
+
+**Before (v1.4.0).** Clients suppress their own torpedo/ship collisions and replay the host's
+report: a client showed a hit 158–161 ms after the host, 190–201 ms for torpedoes the host fired.
+A client that fired the torpedo saw its own hit just as late (it waited for the report too).
+
+**Two causes, two changes:**
+- *Prediction* (`PredictTorpedoHits`): a client shows the collision of its own copy at once and
+  remembers it; the host's report for that shooter and target confirms it (no replay). Only reports
+  without a prediction are replayed.
+- *Copies start late* (`TorpedoLatencyCompensation`): a torpedo spawned from a remote fire message
+  starts one message latency after the shooter's, so the copy hits later too. It is moved ahead along
+  its velocity by the latency of fire messages from that ship (RTT/2 − 15 ms per hop; other clients'
+  fire messages come through the host, two hops). Pulse weapons (disruptors) have their own fire
+  message (opcode 0x1A, 0x0069FBB0 → 0x005762B0); without them the copies still trailed by 88 ms
+  (host) and 163 ms (clients), measured with the torpedo positions every peer logged (`Q` lines,
+  `tools/torptrack.py`).
+
+| Variant | Client − host | Client − host, host's torpedoes | Predicted / confirmed / not confirmed | Replays | Shield/hull differs |
+|---|---|---|---|---|---|
+| v1.4.0 (2 runs) | +158, +161 ms | +201, +190 ms | – | 538, 383 | 5, 0 |
+| prediction only | +74 ms | | 293 / 269 / 24 | 135 | 1 |
+| prediction + advancing on all peers (3 runs) | +1 … +5 ms | | 335–427 / 315–414 / 5–20 | 15–31 | 5–19 |
+| prediction + advancing on the clients (2 runs) | −68 ms | −14, +54 ms | 324–437 / 313–428 / 9–11 | 35 | 6, 10 |
+
+With advancing on the host too, every machine showed the hit at the same moment, but the host's
+advanced copy decided shield or hull differently from the shooter's in 2–6 % of the hits (a segment
+that starts close to the target). Since the host's decision applies the damage, the host keeps its
+unadvanced copy (default; `TorpedoLatencyCompensation=2` advances it too). The host then applies a
+client's hit about 90 ms after the client saw it; the clients show it with the shooter (+20 … +32 ms).
+"Not confirmed": the client showed a hit the host did not have (2–3 %), about as often as a client
+showed a hit of its own before (analysis: 7–11 such hits per run before, 9–21 after).
+
+## Issue #22: phaser banks (experimental `PhaserSync`, off by default)
+
+`tools/banks.py` compares the firing intervals of every phaser bank (the test pilot logs every change
+of every bank's firing state on every peer, `B` lines) with the shooter's own; `tools/phasers.py` does
+the same for the phaser hits per shooter and target (beams). Six players, 180 s, 60 ms, same build,
+PhaserSync off / on (1: other peers start and stop the banks as the owner reports them) / blocking
+only (2: other peers only block and stop banks the owner does not fire):
+
+| | off | 1 (2 runs) | 2 (2 runs) |
+|---|---|---|---|
+| bank firings of the shooter missing on another peer | 16.5 % | 8.1–8.8 % | 8.5–11.9 % |
+| bank firings only on another peer | 170 | 0–2 | 0 |
+| start delay on the other peer (median) | 281 ms | 226–244 ms | 276–290 ms |
+| beams the shooter hit and another peer did not show | 15.9 % | 14.6–17.7 % | 17.7–20.2 % |
+| beams another peer showed and the shooter did not | 71 | 1–3 | 1–4 |
+| client shooters' beams the host did not show (no damage) | 8.1 % | 8.0–10.4 % | 8.9–13.1 % |
+
+The banks then fire as on the shooter's machine, and the beams no other machine should show are gone.
+The hits do not follow: another peer's beam still starts about 280 ms late and ends about 100 ms
+earlier, and a beam that touches its target for less than about 300 ms shows no hit (missed hits came
+with a median firing time of 280–320 ms on that peer, shown hits with 490–500 ms). The hits that
+peers showed from banks the shooter did not fire had covered part of these misses before. A fix
+needs the hits themselves from the shooter or the host, as for torpedoes. Therefore off by default.
+
+**Shield or hull of a predicted hit.** A predicted hit uses the client's own decision. Two causes
+made it differ from the host's in up to 25 of about 450 client hits per run:
+- A shield facing near the "shield down" limit (0.1): the host had 306/3000, the client 294/3000 (the
+  health sync has a resolution of 1/255). A client now does not predict hits on a ship with a facing
+  between 8 % and 12.5 %; the host's report decides those (blocking 5–16 % instead cost too many late
+  hits: 40 % replays in one run).
+- An advanced copy at short range: the copy's hit-test segment started inside the target's shield
+  ellipsoid, which tests the hull first (a hull hit through full shields). The first test of an
+  advanced copy now starts at its spawn point.
+
+Three six-player runs with both: shield/hull differs on 1–4 matches (before 15–25), client − host
+−51 … −71 ms (median), 61–98 of 370–407 client hits replayed (late), 1–25 predictions not confirmed
+(25 in one run, all from one ship's disruptors on the host's ship).
+
+## v1.5.0 release check
+
+Exact release build, default settings (`PredictTorpedoHits=1`, `TorpedoLatencyCompensation=1`,
+`PhaserSync=0`). Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.15, 0.0 % | 0.05 / 0.10, 1.2 % | – | 4 of 4 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.21, 0.0 % | 0.07 / 0.14, 0.0 % | – | 3 of 3 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.13, 0.0 % | 0.05 / 0.11, 0.0 % | 0.07 / 0.16, 0.0 % | 80 of 81 |
+| 6 players, 60 ms (second run) | 0.06 / 0.13, 0.0 % | 0.05 / 0.10, 0.0 % | 0.07 / 0.14, 0.0 % | 54 of 54 |
+| 6 players, all hulls at 5 % after 40 s | 0.07 / 0.15, 0.0 % | 0.05 / 0.12, 0.0 % | 0.07 / 0.17, 0.1 % | 74 of 74 |
+
+Torpedo hit timing (six players): client − host −65, −67, −71 ms; clients − shooter +12 … +25 ms;
+host − shooter +79 … +85 ms (the host applies the damage with its own copy). Predicted hits 282–382 per
+run, not confirmed 2–11, replays 30–71. Kick test: peak error median 3.4 units, max 6.0. Join test:
+every client saw every ship. Installer update from v1.4.0 tested. No crashes.

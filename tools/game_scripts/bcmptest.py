@@ -314,6 +314,7 @@ def InGame():
 	KickShip(pPlayer)
 	t = Now()
 	LogSubsystems(t)
+	LogBanks(t)
 	if t - g_fLastLog < g_fLogEvery * 1000.0:
 		return
 	g_fLastLog = t
@@ -330,6 +331,55 @@ def InGame():
 			iLocal = 1
 		kFwd = pShip.GetWorldForwardTG()
 		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d %.3f %.3f %.3f' % (t, fGameTime, pShip.GetName(), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying(), kFwd.GetX(), kFwd.GetY(), kFwd.GetZ()))
+	LogTorpedoes(t, pPlayer)
+
+def LogTorpedoes(t, pPlayer):
+	# Q t torpedo-id shooter x y z: every torpedo in our set (BCMP_LOG_TORPS=1)
+	if Env('BCMP_LOG_TORPS', '1') != '1':
+		return
+	pSet = pPlayer.GetContainingSet()
+	if not pSet:
+		return
+	pObj = pSet.GetFirstObject()
+	if App.IsNull(pObj):
+		return
+	iFirst = pObj.GetObjID()
+	iGuard = 0
+	while iGuard < 400:
+		pTorp = App.Torpedo_Cast(pObj)
+		if pTorp:
+			kP = pTorp.GetWorldLocation()
+			sShooter = '?'
+			pShooter = App.ShipClass_GetObjectByID(None, pTorp.GetParentID())
+			if pShooter:
+				sShooter = pShooter.GetName()
+			Log('Q %d %d %s %.2f %.2f %.2f' % (t, pTorp.GetObjID(), sShooter, kP.GetX(), kP.GetY(), kP.GetZ()))
+		pObj = pSet.GetNextObject(pObj.GetObjID())
+		if App.IsNull(pObj) or pObj.GetObjID() == iFirst:
+			break
+		iGuard = iGuard + 1
+
+g_dBankState = {}
+
+def LogBanks(t):
+	# B t ship bank on|off target: every change of a phaser bank's firing state, for all ships
+	if Env('BCMP_LOG_BANKS', '1') != '1':
+		return
+	for (iID, pShip) in GetShips():
+		pSys = pShip.GetPhaserSystem()
+		if not pSys:
+			continue
+		i = 0
+		n = pSys.GetNumChildSubsystems()
+		while i < n:
+			pBank = App.Weapon_Cast(pSys.GetChildSubsystem(i))
+			if pBank:
+				iOn = pBank.IsFiring()
+				k = (pShip.GetObjID(), i)
+				if g_dBankState.get(k, 0) != iOn:
+					g_dBankState[k] = iOn
+					Log('B %d %s %d %d %d %s' % (t, pShip.GetName(), i, iOn, pBank.GetTargetID(), string.replace(pBank.GetName(), ' ', '_')))
+			i = i + 1
 
 g_iNextSubLog = 0
 
@@ -395,6 +445,19 @@ def Try(pFunc, sDefault):
 	except:
 		return sDefault
 
+def SourceShipName(pSource):
+	# the ship that fired: a torpedo's parent, or the ship of a phaser bank
+	pTorp = App.Torpedo_Cast(pSource)
+	if pTorp:
+		pShip = App.ShipClass_GetObjectByID(None, pTorp.GetParentID())
+		if pShip:
+			return pShip.GetName()
+		return '?'
+	pSub = App.ShipSubsystem_Cast(pSource)
+	if pSub and pSub.GetParentShip():
+		return pSub.GetParentShip().GetName()
+	return ObjName(pSource)
+
 def OnWeaponHit(pObject, pEvent):
 	t = Now()
 	sTarget = Try(lambda e=pEvent: ObjName(e.GetDestination()), '?')
@@ -404,7 +467,8 @@ def OnWeaponHit(pObject, pEvent):
 	sHull = Try(lambda e=pEvent: '%d' % e.IsHullHit(), '?')
 	sWid = Try(lambda e=pEvent: '%d' % e.GetWeaponInstanceID(), '?')
 	sAt = Try(lambda e=pEvent: '%.1f,%.1f,%.1f' % (e.GetWorldHitPoint().GetX(), e.GetWorldHitPoint().GetY(), e.GetWorldHitPoint().GetZ()), '?')
-	Log('H %d %s fp=%s dmg=%s wtype=%s hull=%s wid=%s at=%s' % (t, sTarget, sFp, sDmg, sType, sHull, sWid, sAt))
+	sSrc = Try(lambda e=pEvent: SourceShipName(e.GetSource()), '?')
+	Log('H %d %s fp=%s dmg=%s wtype=%s hull=%s wid=%s at=%s src=%s' % (t, sTarget, sFp, sDmg, sType, sHull, sWid, sAt, sSrc))
 	pObject.CallNextHandler(pEvent)
 
 def OnExploding(pObject, pEvent):

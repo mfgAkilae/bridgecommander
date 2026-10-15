@@ -21,12 +21,15 @@ MSG_BASE = App.MAX_MESSAGE_TYPES + 120
 MSG_HIT = MSG_BASE
 MSG_PING = MSG_BASE + 1
 MSG_PONG = MSG_BASE + 2
+MSG_BANKS = MSG_BASE + 3    # the phaser banks a ship's owner fires (bitmask)
 
 PING_INTERVAL_MS = 1000
 LEAD_INTERVAL_MS = 500
 LEAD_EXTRA_MS = 30          # half a state update interval plus about one frame
 HIT_SEARCH_RADIUS = 250.0   # max distance between host hit point and local torpedo copy
 WAIT_MS = 400               # how long a hit report waits for our copy of the torpedo
+FIRE_LEAD_TRIM_MS = 15      # RTT/2 from our pings is about this much more than a message's latency
+PREDICT_KEEP_MS = 2000      # how long a predicted hit waits for the host's report
 
 g_idMission = None
 g_bHostHasMod = 0
@@ -37,7 +40,9 @@ g_dHitSent = {}             # host: torpedo id -> ms of its hit report
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
 g_lWaiting = []             # client: hit reports without a local copy yet: [deadline ms, target, shooter, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0, 'forced': 0}
+g_lPredicted = []           # client: hits our own torpedo copies made: [ms, shooter id, target id, hull, matched, torpedo id]
+g_dReplayed = {}            # client: torpedo id -> ms its replay started (their hits are no predictions)
+g_dStats = {'predicted': 0, 'pred_ok': 0, 'pred_false': 0, 'pred_hull_diff': 0, 'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0, 'forced': 0}
 g_iNextStats = 0
 
 
@@ -80,6 +85,7 @@ def DoTick():
 		Register(pMission)
 	RetryWaiting()
 	ExpirePending()
+	ExpirePredicted()
 	t = Ms()
 	if t >= g_iNextPing:
 		g_iNextPing = t + PING_INTERVAL_MS
@@ -91,7 +97,7 @@ def DoTick():
 	if Cfg('Verbose') > 0 and t >= g_iNextStats:
 		g_iNextStats = t + 10000
 		import bcmpdll
-		DllLog('bcmpfix_mp stats %s rtt=%s torp(suppressed allowed)=%s' % (str(g_dStats), str(g_dRtt), bcmpdll.torpstats()))
+		DllLog('bcmpfix_mp stats %s rtt=%s torp(suppressed allowed)=%s phasers(gated charged sent)=%s' % (str(g_dStats), str(g_dRtt), bcmpdll.torpstats(), bcmpdll.phaserstats()))
 
 # ---- join fix -------------------------------------------------------------
 # The missions' RebuildInfoPane (Mission1/2/3/5Menus) runs when a player ship is
@@ -179,10 +185,60 @@ def OnNetMessage(pObject, pEvent):
 			ReceivePing(pMessage, kStream)
 		elif iType == MSG_PONG:
 			ReceivePong(pMessage, kStream)
+		elif iType == MSG_BANKS:
+			ReceiveBanks(pMessage, kStream)
 		kStream.Close()
 	except:
 		import sys
 		LogError('OnNetMessage', sys.exc_type, sys.exc_value)
+
+# ---- phaser banks (PhaserSync) ----------------------------------------------------
+# The DLL watches which phaser banks of our own ship fire and calls SendBanks at once when
+# that changes; every other machine lets that ship's banks fire only while we fire them.
+
+def SendBanks():
+	try:
+		import bcmpdll
+		sState = bcmpdll.takebanks()
+		if not sState or Cfg('PhaserSync') <= 0:
+			return
+		pNet = App.g_kUtopiaModule.GetNetwork()
+		if not pNet:
+			return
+		lParts = string_split(sState)
+		(pMessage, kStream) = NewMessage(MSG_BANKS, 1)
+		import string
+		kStream.WriteInt(string.atoi(lParts[0]))
+		kStream.WriteInt(string.atoi(lParts[1]))
+		kStream.WriteInt(string.atoi(lParts[2]))
+		Finish(pMessage, kStream)
+		if App.g_kUtopiaModule.IsHost():
+			pNet.SendTGMessageToGroup('NoMe', pMessage)
+		elif g_bHostHasMod:
+			pNet.SendTGMessage(pNet.GetHostID(), pMessage)
+	except:
+		import sys
+		LogError('SendBanks', sys.exc_type, sys.exc_value)
+
+def string_split(s):
+	import string
+	return string.split(s)
+
+def ReceiveBanks(pMessage, kStream):
+	import bcmpdll
+	iShip = kStream.ReadInt()
+	iBits = kStream.ReadInt()
+	iTarget = kStream.ReadInt()
+	bcmpdll.setbanks(iShip, iBits, iTarget)
+	if App.g_kUtopiaModule.IsHost():
+		# a client's ship: pass it on to the other clients
+		pNet = App.g_kUtopiaModule.GetNetwork()
+		(pOut, kOut) = NewMessage(MSG_BANKS, 1)
+		kOut.WriteInt(iShip)
+		kOut.WriteInt(iBits)
+		kOut.WriteInt(iTarget)
+		Finish(pOut, kOut)
+		pNet.SendTGMessageToGroup('NoMe', pOut)
 
 # ---- latency ------------------------------------------------------------------
 
@@ -245,12 +301,19 @@ def UpdateLeads(pNet):
 			pShip = pGame.GetShipFromPlayerID(iID)
 			if pShip and pShip.GetObjID() != iOwn:
 				bcmpdll.setlead(pShip.GetObjID(), g_dRtt[iID] / 2 + LEAD_EXTRA_MS)
+				# a client's fire message reaches us directly
+				bcmpdll.setfirelead(pShip.GetObjID(), g_dRtt[iID] / 2 - FIRE_LEAD_TRIM_MS)
 	else:
 		# all state updates come from the host
 		iHost = pNet.GetHostID()
 		if not g_dRtt.has_key(iHost) or not pPlayer:
 			return
 		iLead = g_dRtt[iHost] / 2 + LEAD_EXTRA_MS
+		iHop = g_dRtt[iHost] / 2 - FIRE_LEAD_TRIM_MS
+		pHostShip = pGame.GetShipFromPlayerID(iHost)
+		iHostShip = App.NULL_ID
+		if pHostShip:
+			iHostShip = pHostShip.GetObjID()
 		pSet = pPlayer.GetContainingSet()
 		if not pSet:
 			return
@@ -263,6 +326,12 @@ def UpdateLeads(pNet):
 			pShip = App.ShipClass_Cast(pObj)
 			if pShip and pShip.GetObjID() != iOwn:
 				bcmpdll.setlead(pShip.GetObjID(), iLead)
+				# fire messages of other clients come through the host: two hops (we
+				# assume their latency to the host is like ours)
+				if pShip.GetObjID() == iHostShip:
+					bcmpdll.setfirelead(pShip.GetObjID(), iHop)
+				else:
+					bcmpdll.setfirelead(pShip.GetObjID(), 2 * iHop)
 			pObj = pSet.GetNextObject(pObj.GetObjID())
 			if App.IsNull(pObj) or pObj.GetObjID() == iFirst:
 				break
@@ -276,14 +345,16 @@ def OnWeaponHit(pObject, pEvent):
 	try:
 		if App.g_kUtopiaModule.IsHost():
 			SendHit(pEvent)
-		elif g_dPending:
-			# a replayed host hit just happened locally: retire that torpedo
+		else:
 			pTorp = App.Torpedo_Cast(pEvent.GetSource())
 			if pTorp and g_dPending.has_key(pTorp.GetObjID()):
+				# a replayed host hit just happened locally: retire that torpedo
 				del g_dPending[pTorp.GetObjID()]
 				import bcmpdll
 				bcmpdll.retire(pTorp.this)
 				g_dStats['replayed'] = g_dStats['replayed'] + 1
+			elif pTorp and pEvent.GetWeaponType() == 1 and Cfg('PredictTorpedoHits') > 0:
+				RecordPrediction(pTorp, pEvent)
 	except:
 		import sys
 		LogError('OnWeaponHit', sys.exc_type, sys.exc_value)
@@ -345,6 +416,8 @@ def ReceiveHit(kStream):
 	if not pTarget:
 		g_dStats['no_target'] = g_dStats['no_target'] + 1
 		return
+	if MatchPrediction(iShooter, iTarget, iHull):
+		return
 	# remember the impact point relative to the target: it keeps moving
 	kC = pTarget.GetWorldLocation()
 	lHit = [iTarget, iShooter, fX - kC.GetX(), fY - kC.GetY(), fZ - kC.GetZ(), iHull]
@@ -354,6 +427,60 @@ def ReceiveHit(kStream):
 		g_lWaiting.append([Ms() + WAIT_MS] + lHit)
 		g_dStats['waiting'] = g_dStats['waiting'] + 1
 
+def RecordPrediction(pTorp, pEvent):
+	# our copy of the torpedo hit a ship (DLL: PredictTorpedoHits); the host's report for
+	# it will follow. The stock code may report a shield and a bleed-through hull event for
+	# one torpedo: keep one entry per torpedo.
+	pTarget = App.ShipClass_Cast(pEvent.GetDestination())
+	if not pTarget:
+		return
+	iTorp = pTorp.GetObjID()
+	if g_dReplayed.has_key(iTorp):
+		return
+	for lP in g_lPredicted:
+		if lP[5] == iTorp:
+			return
+	g_lPredicted.append([Ms(), pTorp.GetParentID(), pTarget.GetObjID(), pEvent.IsHullHit(), 0, iTorp])
+	g_dStats['predicted'] = g_dStats['predicted'] + 1
+
+def MatchPrediction(iShooter, iTarget, iHull):
+	t = Ms()
+	for lP in g_lPredicted:
+		if not lP[4] and lP[1] == iShooter and lP[2] == iTarget and t - lP[0] <= PREDICT_KEEP_MS:
+			lP[4] = 1
+			g_dStats['pred_ok'] = g_dStats['pred_ok'] + 1
+			if (lP[3] != 0) != (iHull != 0):
+				g_dStats['pred_hull_diff'] = g_dStats['pred_hull_diff'] + 1
+			return 1
+	return 0
+
+def ExpirePredicted():
+	global g_lPredicted
+	t = Ms()
+	if len(g_dReplayed) > 64:
+		for iID in g_dReplayed.keys():
+			if t - g_dReplayed[iID] > 5000:
+				del g_dReplayed[iID]
+	if not g_lPredicted:
+		return
+	lKeep = []
+	for lP in g_lPredicted:
+		if t - lP[0] <= PREDICT_KEEP_MS:
+			lKeep.append(lP)
+		elif not lP[4]:
+			g_dStats['pred_false'] = g_dStats['pred_false'] + 1
+			if g_dStats['pred_false'] <= 20:
+				pShooter = App.ShipClass_GetObjectByID(None, lP[1])
+				pTarget = App.ShipClass_GetObjectByID(None, lP[2])
+				sShooter = '?'
+				sTarget = '?'
+				if pShooter:
+					sShooter = pShooter.GetName()
+				if pTarget:
+					sTarget = pTarget.GetName()
+				DllLog('bcmpfix_mp: predicted hit not confirmed by the host: %s on %s (%s)' % (sShooter, sTarget, ('shield', 'hull')[lP[3] != 0]))
+	g_lPredicted = lKeep
+
 def StartReplay(pTarget, lHit):
 	# lHit: [target id, shooter id, rel x, rel y, rel z, hull]
 	kC = pTarget.GetWorldLocation()
@@ -361,6 +488,7 @@ def StartReplay(pTarget, lHit):
 	if pTorp is None:
 		return 0
 	g_dPending[pTorp.GetObjID()] = [Ms() + 250, 0, lHit[0], lHit[2], lHit[3], lHit[4], lHit[5]]
+	g_dReplayed[pTorp.GetObjID()] = Ms()
 	ReplayApproach(pTorp, pTarget, g_dPending[pTorp.GetObjID()])
 	return 1
 

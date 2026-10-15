@@ -115,6 +115,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID res)
         relay_install();
         scripterr_install();
         join_install();
+        phaser_install();
     }
     return TRUE;
 }

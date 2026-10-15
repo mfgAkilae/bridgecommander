@@ -83,6 +83,11 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
 16. **Remote ships fly their own path in turns.** The game turns a remote ship slowly towards the
     reported direction; in every turn its nose lags 30–40° behind the owner's. It flies along that
     nose and is pulled back sideways: about 0.3 units of lateral error in turns.
+17. **Late torpedo copies.** A torpedo fired by another player is created from the fire message, one
+    network latency after the shooter's (disruptor pulses through a message of their own), and hits
+    that much later.
+18. **Phaser banks decided per computer.** Only the start and stop of firing are sent; every computer
+    decides per bank whether it can fire. Banks fire on one screen and not on another (#22, open).
 
 What bcmpfix does about it:
 
@@ -104,6 +109,8 @@ What bcmpfix does about it:
 | 14 | while the reported speed differs clearly from the remote copy's own, it follows the velocity measured from received positions; large backward errors are corrected at full speed (v1.3.0) |
 | 15 | LOD distances ×3 (v1.3.0) |
 | 16 | remote ships follow the velocity measured from their received positions, along its estimated turn, and are moved exactly by it; their nose follows the reported one (v1.4.0) |
+| 17 | clients advance such copies by the message latency and show their own copy's hit at once; the host's report confirms it (v1.5.0) |
+| 18 | experimental, off: other computers fire only the banks the owner fires (the hits do not improve yet) |
 
 ## Verification
 
@@ -156,14 +163,15 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Since v1.4.0 remote ships follow the velocity measured from received positions (#11): in turns
   their lateral error dropped from 0.2–0.3 to about 0.05 units and their nose from 30–40° to a few
   degrees off. What remains is mostly the latency itself at the start and end of maneuvers.
-- Clients show a torpedo hit about one latency after the host (#12). Rarely the replay of a
-  host-confirmed hit fails on the client and the hit is not shown there (#15; v1.3.0: 64 of 67 and
-  108 of 109 hits seen by all five clients in six-player games, none by no client).
+- Since v1.5.0 clients show a torpedo hit when their own copy hits, together with the shooter, and
+  the host confirms it about one latency later (#12). In 2–3 % of the hits a client shows a hit the
+  host does not have, and shield or hull differ in about 1–2 %.
+- Phaser beams start on other screens about 0.3 s late and run shorter; hits that the shooter sees are
+  missing on other screens in about 15 % of the beams, also on the host, which applies the damage
+  (#22).
 - Torpedo flight paths still differ a little between players: each computer spawns another player's
   torpedo from that player's ship as it sees it. Since v1.3.0 the flag bits (#8) and the receivers'
   guidance values (#9) match the shooter's. The hit outcome is the host's.
-- Very short phaser hits (taps, the edge of a firing arc) that the shooter sees are often missing on
-  the other screens (1–5 % of the phaser hits per 0.5 s). Damage is applied once, by the host.
 - Peers without the mod keep the original behaviour. Torpedo authority turns on only when the host
   runs the mod (the client waits for an answer to its ping).
 - Developed with a DRM-free `stbc.exe` 1.1. Other executables are untested (#14); if the expected

@@ -358,6 +358,7 @@ static void __fastcall hk_FrameTimer(void *self, void *edx)
                 logf("python stdout redirect: %d", r);
             }
         }
+        phaser_frame(ready);
         if (ready && t >= g_nextTick) {
             int r;
             g_nextTick = t + g_cfg.pythonTickMs / 1000.0;

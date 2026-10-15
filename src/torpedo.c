@@ -22,6 +22,7 @@ static BYTE *g_tramp;
 static unsigned long g_suppressed, g_allowed, g_pushedOut;
 /* Set by the script layer once the host has answered a ping, i.e. runs bcmpfix
  * too. Without a modded host nobody would report hits, so keep stock behaviour. */
+static unsigned long g_predicted, g_advanced;
 static int g_active;
 
 void torpedo_set_active(int on)
@@ -176,6 +177,51 @@ static float *shield_facings(void *ship)
     return (float *)(sh + SHIELD_FACING_PCT);
 }
 
+/* A facing close to the "shield down" limit (0.1) decides shield or hull by a hair: our
+ * copy of the charge comes from the host's health sync with 1/255 resolution and some
+ * delay (host 306/3000, client 294/3000 in a test). Do not predict such hits; the host's
+ * report decides them. */
+static int shields_near_threshold(void *ship)
+{
+    float *f = shield_facings(ship);
+    int i;
+    if (!f)
+        return 0;
+    for (i = 0; i < 6; i++)
+        if (f[i] > 0.08f && f[i] < 0.125f)
+            return 1;
+    return 0;
+}
+
+/* Spawn points of advanced torpedoes (advance_torpedo): the first collision test of such
+ * a torpedo uses the segment from its spawn point, so it does not start inside a ship's
+ * shield ellipsoid at short range (a hull hit through full shields). */
+#define MAXADV 64
+static struct {
+    DWORD id;
+    float p[3];
+} g_adv[MAXADV];
+static int g_advNext;
+
+static void adv_remember(DWORD id, const float *p)
+{
+    g_adv[g_advNext].id = id;
+    memcpy(g_adv[g_advNext].p, p, 12);
+    g_advNext = (g_advNext + 1) % MAXADV;
+}
+
+static int adv_take(DWORD id, float *p)
+{
+    int i;
+    for (i = 0; i < MAXADV; i++)
+        if (g_adv[i].id == id) {
+            memcpy(p, g_adv[i].p, 12);
+            g_adv[i].id = 0;
+            return 1;
+        }
+    return 0;
+}
+
 static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
 {
     (void)edx;
@@ -189,6 +235,24 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
             float *pct = NULL, saved[6];
             int i;
             if (mode < 0) {
+                /* PredictTorpedoHits: show our own collision at once instead of waiting one
+                 * latency for the host's report; the script matches the report to it. Not on
+                 * an exploding ship (see shield_facings). One effect, then the copy is spent. */
+                if (g_cfg.predictHits && *(float *)((BYTE *)other + SHIP_DEATH_TIME) >= 3.0e38f &&
+                    !shields_near_threshold(other)) {
+                    BYTE *t = (BYTE *)torp;
+                    float dmgBefore = *(float *)(t + 0x144), sp[3];
+                    if (adv_take(*(DWORD *)(t + 4), sp))
+                        memcpy(t + TORP_PREV_POS, sp, 12);
+                    mem_write((void *)ADDR_HIT_LOOP_COUNT, &one, 1);
+                    ((PFN_Detect)g_tramp)(torp, 0, other);
+                    mem_write((void *)ADDR_HIT_LOOP_COUNT, &two, 1);
+                    if (t[0x24] || *(float *)(t + 0x144) != dmgBefore) {
+                        g_predicted++;
+                        torpedo_retire(torp);
+                    }
+                    return;
+                }
                 g_suppressed++;
                 return;
             }
@@ -307,6 +371,16 @@ unsigned long torpedo_pushed_out(void)
     return g_pushedOut;
 }
 
+unsigned long torpedo_predicted(void)
+{
+    return g_predicted;
+}
+
+unsigned long torpedo_advanced(void)
+{
+    return g_advanced;
+}
+
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed)
 {
     *suppressed = g_suppressed;
@@ -352,11 +426,54 @@ static void *o_RecvSpawn;
 double __cdecl sqrt(double);
 double __cdecl acos(double);
 
+/* TorpedoLatencyCompensation: a torpedo spawned from a remote fire message starts one
+ * message latency after the shooter's (and the shooter's ship is shown extrapolated to
+ * now), so every copy - the host's, which decides the hit, too - trails the shooter's by
+ * that latency and hits later. Move it ahead along its velocity by the latency of fire
+ * messages from that ship (script: RTT/2 per hop). The hit-test segment still starts at
+ * the spawn point (+0x150), so nothing on the skipped stretch is missed. */
+typedef void(__fastcall *PFN_SetTranslatePtr)(void *obj, void *edx, float *pos);
+typedef void(__fastcall *PFN_ObjVoid)(void *obj, void *edx);
+
+static void advance_torpedo(BYTE *t, void *tube)
+{
+    BYTE *ship = tube ? *(BYTE **)((BYTE *)tube + 0x40) : NULL;
+    float *v, *p, np[3], spawn[3], h;
+    int ms;
+    /* not on the host by default: its copy decides shield or hull, and an advanced copy
+     * decided differently from the shooter's in 2-6 % of the hits (2 = also on the host) */
+    if (!ship || (*(BYTE *)ADDR_IS_HOST && g_cfg.torpedoLead < 2))
+        return;
+    ms = lead_get_fire(*(DWORD *)(ship + 4));
+    if (ms <= 0)
+        return;
+    h = ms / 1000.0f;
+    v = ((PFN_GetVel)ADDR_GET_VELOCITY)(t, 0);
+    p = ((PFN_ShipPos)(*(void ***)t)[0x94 / 4])(t, 0);
+    memcpy(spawn, p, 12);
+    np[0] = p[0] + v[0] * h;
+    np[1] = p[1] + v[1] * h;
+    np[2] = p[2] + v[2] * h;
+    ((PFN_SetTranslatePtr)(*(void ***)t)[0x78 / 4])(t, 0, np);
+    ((PFN_ObjVoid)(*(void ***)t)[0x58 / 4])(t, 0); /* UpdateNodeOnly */
+    /* the hit-test segment must start at the spawn point: a segment that starts inside a
+     * ship's shield ellipsoid is tested against the hull first (a hull hit through full
+     * shields) */
+    memcpy(t + TORP_PREV_POS, spawn, 12);
+    adv_remember(*(DWORD *)(t + 4), spawn);
+    g_advanced++;
+    if (trace_active())
+        tracef("T advance torp=%lu by %d ms (%.1f units)", *(DWORD *)(t + 4), ms,
+               (float)sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]) * h);
+}
+
 static BYTE *__fastcall hk_RecvSpawn(void *self, void *edx, char skew, char sound, char noTarget, int tube, int target,
                                      int *offset, float *dir)
 {
     BYTE *t = ((PFN_RecvSpawn)o_RecvSpawn)(self, edx, skew, sound, noTarget, tube, target, offset, dir);
     (void)edx;
+    if (t && g_cfg.torpedoLead)
+        advance_torpedo(t, self);
     if (t && dir && trace_active()) {
         float *v = ((PFN_GetVel)ADDR_GET_VELOCITY)(t, 0);
         float nv = (float)sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
@@ -372,9 +489,28 @@ static BYTE *__fastcall hk_RecvSpawn(void *self, void *edx, char skew, char soun
     return t;
 }
 
+/* Pulse weapons (disruptors) are spawned from their own fire message (opcode 0x1A,
+ * 0x0069FBB0 -> PulseWeapon fire 0x005762B0, thiscall, 4 arguments, returns the
+ * projectile): advance those too. */
+#define ADDR_CALL_PULSE_SPAWN 0x0069FD4E
+#define ADDR_PULSE_SPAWN 0x005762B0
+typedef BYTE *(__fastcall *PFN_PulseSpawn)(void *self, void *edx, int a1, int a2, int a3, float *dir);
+static void *o_PulseSpawn;
+
+static BYTE *__fastcall hk_PulseSpawn(void *self, void *edx, int a1, int a2, int a3, float *dir)
+{
+    BYTE *t = ((PFN_PulseSpawn)o_PulseSpawn)(self, edx, a1, a2, a3, dir);
+    if (t && g_cfg.torpedoLead)
+        advance_torpedo(t, self);
+    return t;
+}
+
 void torpedo_trace_install(void)
 {
-    if (g_cfg.traceSec > 0)
+    if (g_cfg.traceSec > 0 || g_cfg.torpedoLead)
         redirect_call(ADDR_CALL_RECV_SPAWN, (void *)hk_RecvSpawn, &o_RecvSpawn, ADDR_RECV_SPAWN,
-                      "trace remote torpedo spawns");
+                      g_cfg.torpedoLead ? "remote torpedo spawns: latency compensation" : "trace remote torpedo spawns");
+    if (g_cfg.torpedoLead)
+        redirect_call(ADDR_CALL_PULSE_SPAWN, (void *)hk_PulseSpawn, &o_PulseSpawn, ADDR_PULSE_SPAWN,
+                      "remote pulse spawns: latency compensation");
 }

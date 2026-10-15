@@ -61,7 +61,7 @@ With bcmpfix, the host also decides what everybody sees:
 - The other computers ignore their own hit detection for torpedoes against ships.
 - Instead, they replay the host's hit with their copy of the torpedo at that position. They also take over whether the hit struck the shield or the hull.
 
-All players then see the same hits and misses as the host, delayed by about one network latency.
+All players then see the same hits and misses as the host. Since v1.5.0 your computer shows a hit as soon as its own copy of the torpedo hits, at about the same moment as the shooter; the host's report confirms it a moment later.
 
 - **Torpedo paths:** Torpedoes fired by another player are created on your computer from the fire message. The original gave them more turning power and a longer guidance time there, re-aimed disruptor shots, and swapped two flags: they left the tube sideways and made no launch sound. bcmpfix keeps the shooter's values. This also matters on the host, whose copy decides the hit.
 

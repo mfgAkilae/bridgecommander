@@ -46,6 +46,43 @@ void lead_set(DWORD objId, int ms)
     g_lead[free_].ms = ms;
 }
 
+/* Latency of torpedo fire messages from a ship (script: RTT/2 per hop), used to advance
+ * torpedoes spawned from them (torpedo.c) */
+static struct {
+    DWORD id;
+    int ms;
+} g_fireLead[MAXLEAD];
+
+void lead_set_fire(DWORD objId, int ms)
+{
+    int i, free_ = -1;
+    if (ms < 0)
+        ms = 0;
+    if (ms > g_cfg.maxLeadMs)
+        ms = g_cfg.maxLeadMs;
+    for (i = 0; i < MAXLEAD; i++) {
+        if (g_fireLead[i].id == objId) {
+            g_fireLead[i].ms = ms;
+            return;
+        }
+        if (free_ < 0 && g_fireLead[i].id == 0)
+            free_ = i;
+    }
+    if (free_ < 0)
+        free_ = (int)(objId % MAXLEAD);
+    g_fireLead[free_].id = objId;
+    g_fireLead[free_].ms = ms;
+}
+
+int lead_get_fire(DWORD objId)
+{
+    int i;
+    for (i = 0; i < MAXLEAD; i++)
+        if (g_fireLead[i].id == objId)
+            return g_fireLead[i].ms;
+    return 0;
+}
+
 static int lead_get(DWORD objId)
 {
     int i;

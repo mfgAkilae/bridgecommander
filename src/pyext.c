@@ -159,6 +159,53 @@ static PyObject *__cdecl m_setlead(PyObject *self, PyObject *args)
     return py_none();
 }
 
+/* bcmpdll.setfirelead(objId, ms): latency of torpedo fire messages from that ship */
+static PyObject *__cdecl m_setfirelead(PyObject *self, PyObject *args)
+{
+    int id = 0, ms = 0;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "ii", &id, &ms))
+        return NULL;
+    lead_set_fire((DWORD)id, ms);
+    return py_none();
+}
+
+/* bcmpdll.takebanks(): "ship bits" of our own ship's firing phaser banks if that changed
+ * since the last call, else "" */
+static PyObject *__cdecl m_takebanks(PyObject *self, PyObject *args)
+{
+    DWORD ship, bits, target;
+    char buf[64] = "";
+    (void)self;
+    (void)args;
+    if (phaser_take(&ship, &bits, &target))
+        _snprintf(buf, sizeof(buf), "%lu %lu %lu", ship, bits, target);
+    return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
+}
+
+/* bcmpdll.setbanks(ship, bits, target): the owner of that ship fires these phaser banks */
+static PyObject *__cdecl m_setbanks(PyObject *self, PyObject *args)
+{
+    int ship = 0, bits = 0, target = 0;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "iii", &ship, &bits, &target))
+        return NULL;
+    phaser_set_remote((DWORD)ship, (DWORD)bits, (DWORD)target);
+    return py_none();
+}
+
+/* bcmpdll.phaserstats(): "gated charged sent started stopped" */
+static PyObject *__cdecl m_phaserstats(PyObject *self, PyObject *args)
+{
+    unsigned long g, c, s, st, sp;
+    char buf[96];
+    (void)self;
+    (void)args;
+    phaser_stats(&g, &c, &s, &st, &sp);
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", g, c, s, st, sp);
+    return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
+}
+
 /* SWIG 1.1 pointer strings look like "_<hex>_p_Type" */
 static void *swig_ptr(const char *s)
 {
@@ -222,7 +269,7 @@ static PyObject *__cdecl m_retire(PyObject *self, PyObject *args)
     return py_none();
 }
 
-/* bcmpdll.torpstats(): "suppressed allowed" counters of the torpedo authority hook */
+/* bcmpdll.torpstats(): "suppressed allowed pushed predicted advanced" counters of the torpedo hooks */
 static PyObject *__cdecl m_torpstats(PyObject *self, PyObject *args)
 {
     unsigned long s, a;
@@ -230,7 +277,7 @@ static PyObject *__cdecl m_torpstats(PyObject *self, PyObject *args)
     (void)self;
     (void)args;
     torpedo_stats(&s, &a);
-    _snprintf(buf, sizeof(buf), "%lu %lu %lu", s, a, torpedo_pushed_out());
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", s, a, torpedo_pushed_out(), torpedo_predicted(), torpedo_advanced());
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
@@ -250,6 +297,12 @@ static PyObject *__cdecl m_config(PyObject *self, PyObject *args)
         v = g_cfg.testMode;
     else if (!lstrcmpiA(k, "Verbose"))
         v = g_cfg.verbose;
+    else if (!lstrcmpiA(k, "PhaserSync"))
+        v = g_cfg.phaserSync;
+    else if (!lstrcmpiA(k, "PredictTorpedoHits"))
+        v = g_cfg.predictHits;
+    else if (!lstrcmpiA(k, "TorpedoLatencyCompensation"))
+        v = g_cfg.torpedoLead;
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(v);
 }
 
@@ -260,6 +313,10 @@ static PyMethodDef g_methods[] = {
     {"retire", m_retire, 1, NULL},
     {"authority", m_authority, 1, NULL},
     {"setlead", m_setlead, 1, NULL},
+    {"takebanks", m_takebanks, 1, NULL},
+    {"setbanks", m_setbanks, 1, NULL},
+    {"phaserstats", m_phaserstats, 1, NULL},
+    {"setfirelead", m_setfirelead, 1, NULL},
     {"torpstats", m_torpstats, 1, NULL},
     {"config", m_config, 1, NULL},
     {"ms", m_ms, 1, NULL},

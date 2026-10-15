@@ -31,6 +31,9 @@ typedef struct Config {
     int trackLeadOffsetMs;
     int trackArc;           /* VelocityTracking: extrapolate along the estimated turn of the velocity */  /* added to the latency compensation of the velocity target (velo.c) */
     int knockbackCorrection; /* follow the measured velocity while a ship is knocked off its nose */
+    int torpedoLead;        /* advance remotely spawned torpedoes by the fire message's latency */
+    int predictHits;        /* clients show their own torpedo/ship collisions at once (host confirms) */
+    int phaserSync;         /* remote phaser banks fire only while their owner fires them */
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
@@ -95,11 +98,15 @@ void torpedo_authorize(DWORD torpId);
 void torpedo_authorize_mode(DWORD torpId, int mode);
 void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z);
 int torpedo_force(void *torp, void *target);
+void lead_set_fire(DWORD objId, int ms);
+int lead_get_fire(DWORD objId);
 int torpedo_force_replay(void *torp, void *target);
 void torpedo_retire(void *torp);
 void torpedo_set_active(int on);
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed);
 unsigned long torpedo_pushed_out(void);
+unsigned long torpedo_predicted(void);
+unsigned long torpedo_advanced(void);
 void lead_install(void);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
@@ -112,4 +119,10 @@ int velo_target(BYTE *ai, float *target, float *dir);
 int velo_knocked(BYTE *ai, float proxySpeed);
 void scripterr_install(void);
 void join_install(void);
+void phaser_install(void);
+void phaser_frame(int pythonReady);
+void phaser_set_remote(DWORD ship, DWORD bits, DWORD target);
+int phaser_take(DWORD *ship, DWORD *bits, DWORD *target);
+void phaser_stats(unsigned long *gated, unsigned long *charged, unsigned long *sent, unsigned long *started,
+                  unsigned long *stopped);
 unsigned long scripterr_count(void);

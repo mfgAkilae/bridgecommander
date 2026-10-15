@@ -21,7 +21,7 @@ def last_stats(path):
 def main():
     for run in sys.argv[1:]:
         tot = {}
-        torp = [0, 0, 0]
+        torp = [0, 0, 0, 0, 0]
         n = 0
         for f in sorted(os.listdir(run)):
             if not re.match(r'dll_client\d*\.log$', f):
@@ -32,18 +32,20 @@ def main():
             n += 1
             for k, v in re.findall(r"'(\w+)': (\d+)", line):
                 tot[k] = tot.get(k, 0) + int(v)
-            m = re.search(r'torp\(suppressed allowed\)=(\d+) (\d+)(?: (\d+))?', line)
+            m = re.search(r'torp\(suppressed allowed\)=(\d+) (\d+)(?: (\d+))?(?: (\d+))?(?: (\d+))?', line)
             if m:
-                for i in range(3):
+                for i in range(5):
                     torp[i] += int(m.group(i + 1) or 0)
         mn = tot.get('moved_n', 0)
         print('%s: %d clients, hits_recv %d replayed %d forced %d no_torpedo %d expired %d waiting %d late_found %d '
-              'lost %d | moved mean %.2f max %.2f (n=%d) | suppressed %d allowed %d pushed %d' % (
+              'lost %d | moved mean %.2f max %.2f (n=%d) | suppressed %d allowed %d pushed %d | predicted %d ok %d '
+              'false %d hull diff %d | DLL predicted %d advanced %d' % (
                   os.path.basename(os.path.normpath(run)), n, tot.get('hits_recv', 0), tot.get('replayed', 0),
                   tot.get('forced', 0), tot.get('no_torpedo', 0), tot.get('expired', 0), tot.get('waiting', 0),
                   tot.get('late_found', 0), tot.get('lost', 0),
                   tot.get('moved_sum', 0) / 100.0 / mn if mn else float('nan'),
-                  tot.get('moved_max', 0) / 100.0, mn, torp[0], torp[1], torp[2]))
+                  tot.get('moved_max', 0) / 100.0, mn, torp[0], torp[1], torp[2], tot.get('predicted', 0),
+                  tot.get('pred_ok', 0), tot.get('pred_false', 0), tot.get('pred_hull_diff', 0), torp[3], torp[4]))
 
 
 if __name__ == '__main__':
