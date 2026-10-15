@@ -7,9 +7,17 @@
  * and the target is p0 + v * h (h = latency compensation + age of the update).
  * Mode 2 also estimates how fast the velocity turns and extrapolates along that arc.
  * The proxy itself is still flown by NetworkAI along its nose, i.e. with the drift
- * of its own ship class. Off by default (worse than the stock line in normal flight);
- * KnockbackCorrection uses the same estimate only while a hit has knocked a ship off
- * its nose (velo_knocked). */
+ * of its own ship class. Off by default (worse than the stock line in normal flight).
+ *
+ * VelocityTracking (default since v1.4.0) uses the same target, along the estimated
+ * turn (TrackingArc), but netfix.c also moves the proxy by the difference between this
+ * velocity and the proxy's own, so the proxy no longer flies its own path. The
+ * proxy's nose lags the owner's by 30-40 degrees in every turn; with tracking that no
+ * longer moves the ship sideways, and the nose is turned fully to the reported one.
+ * The latency compensation is the script's RTT/2 + 30 ms; TrackingLeadOffsetMs (-45)
+ * removes what was meant for the old correction lag. Without tracking,
+ * KnockbackCorrection uses the estimate only while a hit has knocked a ship off its
+ * nose (velo_knocked). */
 #include "common.h"
 
 double __cdecl sqrt(double);
@@ -203,7 +211,7 @@ int velo_target(BYTE *ai, float *target, float *dir)
     float h, hc, off[3], ve[3], vu[3], n;
     if (i < 0 || g_ship[i].n < 1)
         return 0;
-    h = g_ship[i].lead + (game_time() - g_ship[i].gotAt);
+    h = g_ship[i].lead + g_cfg.trackLeadOffsetMs / 1000.0f + (game_time() - g_ship[i].gotAt);
     if (h < 0.0f)
         h = 0.0f;
     /* direction from the received positions (it shows the drift), magnitude from the
@@ -219,7 +227,7 @@ int velo_target(BYTE *ai, float *target, float *dir)
         else
             memcpy(vu, g_ship[i].v, 12);
     }
-    if (g_cfg.velocityExtrapolation == 2) {
+    if (g_cfg.velocityExtrapolation == 2 || (g_cfg.velocityTracking && g_cfg.trackArc)) {
         hc = h > MAX_HORIZON ? MAX_HORIZON : h;
         arc(vu, g_ship[i].w, hc, off);
         rotate(vu, g_ship[i].w, hc, ve);

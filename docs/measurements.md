@@ -341,3 +341,91 @@ A second six-player run with the same sources (development build): 0.37 / 0.46, 
 0.44 / 0.83, 108 of 109 hits seen by all. Kick test (exact build): 120 (kick, viewer) pairs, peak error
 median 5.3, 90th percentile 7.1, max 7.9 units, 0.8 s above 5 units on average. Join tests: the
 ghost-ship fix fired in 2 of 3 runs, every client saw every ship. No hangs or script errors.
+
+## Issue #11: velocity tracking (v1.4.0)
+
+`tools/lateral.py` splits each remote view's error along the owner's velocity (+ = ahead) and
+laterally, by the owner's turn rate, and compares the remote ship's nose with the owner's (the test
+pilot logs the forward vector since this version).
+
+**Cause.** With v1.3.0 the remote ship's nose lagged the owner's by a median of 29–33° (90th
+percentile 34–38°). The distribution is bimodal: a few degrees in straight flight, 30–40° in every turn.
+NetworkAI turns the proxy physically and slowly, and the threshold correction of v1.2.1 only acts
+beyond 30°. The proxy flies along its own nose, so in turns it flew a different path, and the position
+correction pulled it sideways: in turns of 0.3–0.6 rad/s the lateral error was 0.30–0.33 units for the
+host's ship (outside the curve) and 0.22–0.46 for the client's ship (inside the curve; that ship class
+drifts 50° in such turns).
+
+**Steps** (two players, 60 ms ±20 ms, 1 % loss, 180 s; mean error / 95th percentile; lateral error in
+turns of 0.3–0.6 rad/s; nose angle median):
+
+| Variant | Host ship | Client ship | Lateral in turns, host / client ship | Nose |
+|---|---|---|---|---|
+| v1.3.0 (2 runs) | 0.36 / 0.45–0.53 | 0.18–0.23 / 0.32–0.43 | 0.30–0.33 / 0.22–0.26 | 30–33° |
+| tracking: velocity target + feed-forward (2 runs) | 0.26–0.28 / 0.38–0.41 | 0.21 / 0.29–0.31 | 0.14–0.15 / 0.07 | 27–31° |
+| + latency compensation −30 ms | 0.11 / 0.19 | 0.07 / 0.12 | 0.11 / 0.05 | 28–31° |
+| + latency compensation −50 ms | 0.09 / 0.16 | 0.07 / 0.12 | 0.10 / 0.05 | 30–32° |
+| + nose turned fully to the reported one | 0.10 / 0.17 | 0.06 / 0.11 | 0.10 / 0.05 | 4° |
+| + extrapolation along the estimated turn | 0.05 / 0.11 | 0.03 / 0.07 | 0.05 / 0.02 | 3° |
+
+- Feed-forward: besides the proportional correction, the proxy is moved each frame by the difference
+  between the target's velocity and its own physical velocity, so it no longer flies its own path
+  (the same mechanism as the knockback correction, now all the time).
+- With the lag gone, the latency compensation (the script's RTT/2 + 30 ms; the 30 ms made up for the
+  correction lag) put the ship 0.20–0.27 units ahead; −45 ms (`TrackingLeadOffsetMs`) removes it.
+- The nose can follow the reported one fully once it no longer steers the position.
+- The velocity estimate from received positions lags in continuous turns; extrapolating along its
+  estimated turn (`TrackingArc`) halved the remaining lateral error.
+
+Six players (60 ms) and two players at 150 ms ±50 ms, 5 % loss:
+
+| Run | v1.3.0 | tracking, straight | tracking + turn |
+|---|---|---|---|
+| 6 players: client views host | 0.37 / 0.53 | 0.08–0.09 / 0.13 | 0.06 / 0.11 |
+| 6 players: host views client | 0.23 / 0.38 | 0.06–0.07 / 0.12–0.13 | 0.05 / 0.10 |
+| 6 players: client views client | 0.40 / 0.70 | 0.09 / 0.17 | 0.07 / 0.15 |
+| 6 players: lateral in turns, host ship / client ships (direct / relayed) | 0.33 / 0.15 / 0.24 | 0.09–0.10 / 0.07–0.08 / 0.09 | 0.04 / 0.04 / 0.05 |
+| 2 players 150 ms: host ship | 0.30 / 0.51 | 0.17 / 0.27 | 0.08 / 0.20 |
+| 2 players 150 ms: client ship | 0.33 / 0.61 | 0.11 / 0.16 | 0.07 / 0.15 |
+
+The smoothness of the remote tracks (RMS of the second difference of positions 100 ms apart) changed
+by −13 % to +18 % against v1.3.0, without a consistent direction. Torpedo replays: 0–7 of about 470 expired per six-player run with tracking,
+0–2 without; 82–92 of 84–94 host hits were seen by all five clients. Knockback test with tracking (no
+turn): peak error after a kick median 3.4 units, max 5.8 (v1.3.0: 5.3 / 7.9).
+
+## Replays without a hit and a client crash (v1.4.0)
+
+**Replays without a hit.** A client's replay of a host-confirmed torpedo hit gives up after three
+approaches. In six-player runs this happened 0–9 times per game (sum over the five clients), mostly
+for the same hit on every client. The log of such cases showed the copy stopped next to or inside the
+ship without a collision, for example for hull hits that the host reported 1.2 units from the ship's
+centre (deep inside the hull). Since v1.4.0 the copy is then put just inside the impact point, then at
+the centre, then treated as a shield hit, and the collision is run at once; the copy is retired
+afterwards like after a normal replay. Nine six-player runs: 0–14 such forced hits per game, no replay
+left without a hit, 98–100 % of the host's torpedo hits seen by all five clients.
+
+**Client crash.** Twice (once with a v1.2.1 build, once during this work) every client crashed at the
+same moment, each time within a second of a ship's death: access violation reading 0x3F8000C0 in
+`hk_DetectCollision`, called from the proximity pass (return address 0x5A88D4). The replay forces the
+host's shield/hull decision by changing the target's shield facings, read through the ship's shield
+pointer (+0x2C0). For an exploding ship that pointer held 1.0f (0x3F800000). The facings are now only
+used for a living ship (death time +0x14C still FLT_MAX) whose shield pointer is committed, writable
+memory with a vtable in the game's `.rdata`. In the release check the check caught such a pointer
+twice; no crash in any run since, including runs where all hulls were set to 5 % at 40 s.
+
+## v1.4.0 release check
+
+Exact release build, default settings. Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.15, 0.0 % | 0.05 / 0.09, 0.0 % | – | 8 of 8 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.05 / 0.10, 0.0 % | 0.05 / 0.10, 0.0 % | 0.08 / 0.16, 0.0 % | 93 of 93 seen by all |
+| 6 players, 60 ms (second run) | 0.05 / 0.09, 0.0 % | 0.05 / 0.10, 0.0 % | 0.08 / 0.16, 0.0 % | 48 of 48 |
+| 6 players, all hulls at 5 % after 40 s | 0.05 / 0.10, 0.0 % | 0.05 / 0.11, 0.0 % | 0.09 / 0.18, 0.0 % | 61 of 61 |
+
+Lateral error in turns of 0.3–0.6 rad/s 0.035–0.048 units; nose angle median 2.9–4.8°. Replays:
+0–10 forced hits per game, none left without a hit. The build before the last change (pointer check
+with `VirtualQuery` instead of `IsBadReadPtr`, otherwise the same): 2 players at 150 ms 0.10 / 0.21
+and 0.06 / 0.13; kick test peak error median 3.2, 90th percentile 4.2, max 7.5 units; two join tests
+with every ship visible on every client. No crashes in any of these runs.

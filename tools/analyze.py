@@ -112,14 +112,14 @@ def view_errors(ref, track, dead_ts):
 def torp_hits(hits):
     """Torpedo/pulse projectile hits, one per projectile: the stock code reports a hit that
     bleeds through the shield as two events (shield, then hull) with the same weapon
-    instance id; keep the first and its shield/hull flag."""
+    instance id, the hull part up to a few hundred ms later; keep the first and its shield/hull flag."""
     out, last = [], {}
     for t, target, rest in hits:
         kv = dict(x.split('=', 1) for x in rest.split() if '=' in x)
         if kv.get('wtype') != '1':
             continue
         key = (kv.get('wid'), target)
-        if key in last and t - last[key] < 300:
+        if key in last and t - last[key] < 1000:  # the host reports one hit per torpedo within 1 s
             continue
         last[key] = t
         out.append((t, target, kv.get('hull')))

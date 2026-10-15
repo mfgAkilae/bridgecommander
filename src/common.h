@@ -27,6 +27,9 @@ typedef struct Config {
     int hostRelay;          /* host writes client ships from the received state, not its proxy */
     int noScriptConsole;    /* script errors: log and continue instead of the blocking debug console */
     float lodScale;         /* state-update distance LOD thresholds x this (1 = stock) */
+    int velocityTracking;   /* remote ships follow the measured velocity (velo.c) with feed-forward */
+    int trackLeadOffsetMs;
+    int trackArc;           /* VelocityTracking: extrapolate along the estimated turn of the velocity */  /* added to the latency compensation of the velocity target (velo.c) */
     int knockbackCorrection; /* follow the measured velocity while a ship is knocked off its nose */
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
@@ -92,6 +95,7 @@ void torpedo_authorize(DWORD torpId);
 void torpedo_authorize_mode(DWORD torpId, int mode);
 void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z);
 int torpedo_force(void *torp, void *target);
+int torpedo_force_replay(void *torp, void *target);
 void torpedo_retire(void *torp);
 void torpedo_set_active(int on);
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed);

@@ -37,10 +37,10 @@ def main():
                 for i in range(3):
                     torp[i] += int(m.group(i + 1) or 0)
         mn = tot.get('moved_n', 0)
-        print('%s: %d clients, hits_recv %d replayed %d no_torpedo %d expired %d waiting %d late_found %d '
+        print('%s: %d clients, hits_recv %d replayed %d forced %d no_torpedo %d expired %d waiting %d late_found %d '
               'lost %d | moved mean %.2f max %.2f (n=%d) | suppressed %d allowed %d pushed %d' % (
                   os.path.basename(os.path.normpath(run)), n, tot.get('hits_recv', 0), tot.get('replayed', 0),
-                  tot.get('no_torpedo', 0), tot.get('expired', 0), tot.get('waiting', 0),
+                  tot.get('forced', 0), tot.get('no_torpedo', 0), tot.get('expired', 0), tot.get('waiting', 0),
                   tot.get('late_found', 0), tot.get('lost', 0),
                   tot.get('moved_sum', 0) / 100.0 / mn if mn else float('nan'),
                   tot.get('moved_max', 0) / 100.0, mn, torp[0], torp[1], torp[2]))

@@ -62,7 +62,7 @@ typedef float *(__fastcall *PFN_GetVecOut)(void *obj, void *edx, float *out);
 static unsigned long g_heldBack; /* frames in which a backward correction was limited */
 static float g_veloDir[3];      /* direction of flight from velo.c for this correction call */
 static int g_veloDirValid;
-static int g_knocked; /* this correction call follows a knocked ship (velo_knocked) */
+static int g_feedForward; /* this correction call follows the measured velocity (VelocityTracking, knockback) */
 
 /* Smooth correction (SmoothCorrection=1): the stock code moves the proxy straight
  * towards the target. When the proxy is ahead of the target (extrapolation overshot,
@@ -72,9 +72,9 @@ static int g_knocked; /* this correction call follows a knocked ship (velo_knock
  * corrected as before; a backward part is limited to half the distance the ship flies
  * in this frame, so the ship only slows down until the target catches up. Backward
  * errors beyond 30 % of the speed (a hit knocked the real ship back) are corrected at
- * full gain. While the ship is knocked off its nose (KnockbackCorrection, velo.c) the
- * direction of flight is the measured velocity, and the proxy is also moved by the
- * difference between that velocity and its own. */
+ * full gain. With VelocityTracking (or while a ship is knocked off its nose,
+ * KnockbackCorrection) the direction of flight is the measured velocity, and the proxy
+ * is also moved by the difference between that velocity and its own (velo.c). */
 static void smooth_correct(BYTE *ai, void *ship, float dt)
 {
     void **vt = *(void ***)ship;
@@ -119,8 +119,8 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
     }
     for (i = 0; i < 3; i++)
         newpos[i] = pos[i] + (e[i] - along * m[i]) * k + m[i] * back;
-    if (g_knocked) {
-        /* the proxy flies along its nose at its engine speed, the knocked ship along the
+    if (g_feedForward) {
+        /* the proxy flies along its own nose at its engine speed, the real ship along the
          * measured velocity: move the proxy by the difference, so the proportional
          * correction only has the residual error to remove (no steady lag) */
         float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
@@ -133,7 +133,7 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
         float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
         tracef("C obj=%lu dt=%.4f along=%.3f lat=%.3f back=%.4f spd=%.2f nose.fwd=%.3f pv=%.2f kn=%d", *(DWORD *)((BYTE *)ship + 4),
                dt, along, lat2 > 0.0f ? (float)sqrt(lat2) : 0.0f, back, speed,
-               nose[0] * m[0] + nose[1] * m[1] + nose[2] * m[2], (float)sqrt(pv[0] * pv[0] + pv[1] * pv[1] + pv[2] * pv[2]), g_knocked);
+               nose[0] * m[0] + nose[1] * m[1] + nose[2] * m[2], (float)sqrt(pv[0] * pv[0] + pv[1] * pv[1] + pv[2] * pv[2]), g_feedForward);
     }
     ((PFN_SetPos)vt[0x78 / 4])(ship, 0, newpos);
 }
@@ -177,6 +177,10 @@ static void align_orientation(BYTE *ai, void *ship, float dt)
          * turn rate over latency + age of the update (orient.c) */
         rf = pf;
         ru = pu;
+    } else if (g_cfg.orientationCorrection == 3 || g_cfg.velocityTracking) {
+        /* mode 3, and mode 1 with VelocityTracking: always towards the received vectors. With
+         * tracking the position no longer depends on the proxy's own flight, so its nose can
+         * follow the owner's (otherwise it lags 30-40 degrees in every turn) */
     } else {
         /* mode 1: only when the nose lags far behind. In ordinary turns the physical
          * turning keeps rotating and so predicts the turn, while the received vectors
@@ -212,8 +216,9 @@ static int knocked(BYTE *ai, void *ship)
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
-    g_veloDirValid = g_knocked = 0;
-    if (ship && (g_cfg.velocityExtrapolation || (g_cfg.knockbackCorrection && knocked((BYTE *)self, ship)))) {
+    g_veloDirValid = g_feedForward = 0;
+    if (ship && (g_cfg.velocityExtrapolation || g_cfg.velocityTracking ||
+                 (g_cfg.knockbackCorrection && knocked((BYTE *)self, ship)))) {
         /* replace NetworkAI's target (reported nose * speed) with the extrapolation
          * along the velocity estimated from received positions (velo.c): always with
          * VelocityExtrapolation, otherwise while the ship is knocked off its nose */
@@ -221,7 +226,7 @@ static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float 
         if (velo_target((BYTE *)self, t, g_veloDir)) {
             memcpy((BYTE *)self + 0x30, t, 12);
             g_veloDirValid = g_veloDir[0] != 0.0f || g_veloDir[1] != 0.0f || g_veloDir[2] != 0.0f;
-            g_knocked = g_veloDirValid && !g_cfg.velocityExtrapolation;
+            g_feedForward = g_veloDirValid && !g_cfg.velocityExtrapolation;
         }
     } else if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && ship) {
         /* replace NetworkAI's straight-line target with the arc extrapolation */

@@ -45,6 +45,7 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
   - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
   - A ship whose nose lags more than 30° behind the direction its owner reported (after a sharp turn) is turned towards it, so it does not fly the wrong way and drift back.
+- **Turns:** The game turned another player's ship only slowly towards the direction that player reported; in every turn its nose pointed 30–40° away and the ship slid sideways. bcmpfix now moves remote ships along the velocity measured from their received positions, including the turn, and turns their nose to the reported direction.
 - **Knockback:** A hit or an explosion can push a ship sideways or backwards while its nose keeps pointing ahead. The game extrapolated it along its nose, and on the other screens it fell behind by tens of units for many seconds. While a ship is knocked off its course, bcmpfix now follows the velocity measured from its received positions.
 - **Distant ships:** The game sends fewer position updates for distant ships, one per second beyond 343 units. bcmpfix triples these distances. This doubles the host's upload (about 25 kB/s with six players).
 - **Three or more players:** The host passes on each player's ship as that player reported it (position, direction, speed), not its own smoothed copy.

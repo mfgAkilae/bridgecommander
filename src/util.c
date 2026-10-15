@@ -47,6 +47,9 @@ void config_load(void)
     g_cfg.arcExtrapolation = ini_int(ini, "Fixes", "ArcExtrapolation", 1);
     g_cfg.velocityExtrapolation = ini_int(ini, "Fixes", "VelocityExtrapolation", 0);
     g_cfg.knockbackCorrection = ini_int(ini, "Fixes", "KnockbackCorrection", 1);
+    g_cfg.velocityTracking = ini_int(ini, "Fixes", "VelocityTracking", 1);
+    g_cfg.trackLeadOffsetMs = ini_int(ini, "Fixes", "TrackingLeadOffsetMs", -45);
+    g_cfg.trackArc = ini_int(ini, "Fixes", "TrackingArc", 1);
     g_cfg.lodScale = ini_int(ini, "Fixes", "UpdateDistanceScalePercent", 300) / 100.0f;
     g_cfg.sendInterval = ini_int(ini, "Fixes", "StateUpdateIntervalMs", 50) / 1000.0f;
     g_cfg.retransmitMs = ini_int(ini, "Fixes", "ResendIntervalMs", 300);

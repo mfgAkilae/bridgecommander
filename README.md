@@ -80,6 +80,9 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
     remote copies fall behind by tens of units for many seconds.
 15. **Distance LOD.** Beyond 228 units a player gets a fifth of the position updates of a ship,
     beyond 343 units one per second; any change of course at that range is seen up to a second late.
+16. **Remote ships fly their own path in turns.** The game turns a remote ship slowly towards the
+    reported direction; in every turn its nose lags 30–40° behind the owner's. It flies along that
+    nose and is pulled back sideways: about 0.3 units of lateral error in turns.
 
 What bcmpfix does about it:
 
@@ -100,6 +103,7 @@ What bcmpfix does about it:
 | 13 | the host's later copy is read into the ship without a set, which puts it into the mission set (v1.3.0) |
 | 14 | while the reported speed differs clearly from the remote copy's own, it follows the velocity measured from received positions; large backward errors are corrected at full speed (v1.3.0) |
 | 15 | LOD distances ×3 (v1.3.0) |
+| 16 | remote ships follow the velocity measured from their received positions, along its estimated turn, and are moved exactly by it; their nose follows the reported one (v1.4.0) |
 
 ## Verification
 
@@ -129,7 +133,7 @@ per row; latency, jitter and loss apply per direction:
 
 Six players (host + five clients, mixed Federation, Klingon, Romulan and Cardassian ships), 60 ms
 ±20 ms, 1 % loss: other clients' ships were 7.09 units off in the original, 1.11 with v1.0.0 and
-0.73 with v1.1.0 (host relay), 0.44 with v1.2.0 and 0.41 with v1.3.0. Torpedo hits seen by all five
+0.73 with v1.1.0 (host relay), 0.44 with v1.2.0, 0.41 with v1.3.0 and 0.08 with v1.4.0. Torpedo hits seen by all five
 clients: 36 of 68 (original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0), 58 of 61 (v1.2.0), 64 of 67 and
 108 of 109 (v1.3.0).
 
@@ -149,9 +153,9 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Tested with up to six players in one sandbox, not over the internet and not with a dedicated
   server (#13). Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
-- A lateral error of about 0.2–0.5 units remains during turns: ships drift (their velocity lags the
-  nose), and the game extrapolates along the nose. Turn prediction and velocity-based extrapolation
-  were tried and were worse overall (#11, `docs/measurements.md`).
+- Since v1.4.0 remote ships follow the velocity measured from received positions (#11): in turns
+  their lateral error dropped from 0.2–0.3 to about 0.05 units and their nose from 30–40° to a few
+  degrees off. What remains is mostly the latency itself at the start and end of maneuvers.
 - Clients show a torpedo hit about one latency after the host (#12). Rarely the replay of a
   host-confirmed hit fails on the client and the hit is not shown there (#15; v1.3.0: 64 of 67 and
   108 of 109 hits seen by all five clients in six-player games, none by no client).

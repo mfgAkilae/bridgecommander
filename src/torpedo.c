@@ -141,6 +141,41 @@ static void push_outside_shield(void *ship, float *st)
     g_pushedOut++;
 }
 
+/* A ship that is exploding (DamageableObject::IsDying: death time at +0x14C below
+ * FLT_MAX) may already have freed subsystems: its shield pointer then points into
+ * reused memory. Forcing the shield/hull decision on such a ship crashed every client
+ * at once (read at 0x3F8000C0, the shield pointer was 1.0f) when a replayed hit and the
+ * explosion coincided. Use the shields only of a living ship and only if the pointer
+ * looks like an object of the game (vtable in .rdata). */
+#define SHIP_DEATH_TIME 0x14C
+
+/* committed, writable memory for [p, p + n) - without touching it (IsBadReadPtr raises
+ * first-chance exceptions, which the crash log would report) */
+static int writable(const void *p, SIZE_T n)
+{
+    MEMORY_BASIC_INFORMATION mbi;
+    if (!VirtualQuery(p, &mbi, sizeof(mbi)) || mbi.State != MEM_COMMIT || (mbi.Protect & (PAGE_NOACCESS | PAGE_GUARD)))
+        return 0;
+    if (!(mbi.Protect & (PAGE_READWRITE | PAGE_EXECUTE_READWRITE | PAGE_WRITECOPY | PAGE_EXECUTE_WRITECOPY)))
+        return 0;
+    return (const BYTE *)p + n <= (const BYTE *)mbi.BaseAddress + mbi.RegionSize;
+}
+
+static float *shield_facings(void *ship)
+{
+    BYTE *sh;
+    DWORD vt;
+    if (*(float *)((BYTE *)ship + SHIP_DEATH_TIME) < 3.0e38f)
+        return NULL;
+    sh = *(BYTE **)((BYTE *)ship + SHIP_SHIELDS);
+    if (!sh || !writable(sh, SHIELD_FACING_PCT + 24))
+        return NULL;
+    vt = *(DWORD *)sh;
+    if (vt < 0x00888000 || vt >= 0x008BB000)
+        return NULL;
+    return (float *)(sh + SHIELD_FACING_PCT);
+}
+
 static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
 {
     (void)edx;
@@ -167,9 +202,8 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
             }
             /* make the local shield/hull decision follow the host's */
             if (mode > 0) {
-                BYTE *sh = *(BYTE **)((BYTE *)other + SHIP_SHIELDS);
-                if (sh) {
-                    pct = (float *)(sh + SHIELD_FACING_PCT);
+                pct = shield_facings(other);
+                if (pct) {
                     for (i = 0; i < 6; i++) {
                         saved[i] = pct[i];
                         if (mode == 1 && pct[i] <= 0.1f)
@@ -221,6 +255,37 @@ int torpedo_force(void *torp, void *target)
     if (g_cfg.verbose)
         logf("forcehit torp %08lx target %08lx dmg %.1f -> %.1f spent=%d", *(DWORD *)(t + 4),
              *(DWORD *)((BYTE *)target + 4), dmgBefore, *(float *)(t + 0x144), t[0x24]);
+    return hit;
+}
+
+/* Last resort for a replay whose approaches produced no hit: the script has put the
+ * torpedo just inside the host's impact point (SetTranslate + UpdateNodeOnly); run the
+ * collision now, through the hook, so the authorised start point outside the ship and
+ * the host's shield/hull decision apply. Needs a replay authorisation (allowhit).
+ * Returns 1 if the torpedo hit. */
+int torpedo_force_replay(void *torp, void *target)
+{
+    BYTE *t = (BYTE *)torp;
+    float dmgBefore, *p, *c, *ax;
+    int mode, hit;
+    if (!g_tramp || !torp || !target)
+        return 0;
+    mode = is_authorized(*(DWORD *)(t + 4));
+    if (t[0x24] || mode < 0) {
+        logf("forced replay torp %lu: not possible (spent %d, mode %d)", *(DWORD *)(t + 4), t[0x24], mode);
+        return 0;
+    }
+    dmgBefore = *(float *)(t + 0x144);
+    hk_DetectCollision(torp, 0, target);
+    hit = t[0x24] || *(float *)(t + 0x144) != dmgBefore;
+    p = ((PFN_ShipPos)(*(void ***)torp)[0x94 / 4])(torp, 0);
+    c = ((PFN_ShipPos)(*(void ***)target)[0x94 / 4])(target, 0);
+    ax = (float *)((BYTE *)target + SHIP_SHIELD_AXES);
+    if (!hit || g_cfg.verbose || g_cfg.testMode)
+        logf("forced replay torp %lu mode %d: %s; prev %.1f %.1f %.1f pos %.1f %.1f %.1f ship %.1f %.1f %.1f axes %.1f %.1f %.1f "
+         "dmg %.1f -> %.1f", *(DWORD *)(t + 4), mode, hit ? "hit" : "NO hit", ((float *)(t + TORP_PREV_POS))[0],
+         ((float *)(t + TORP_PREV_POS))[1], ((float *)(t + TORP_PREV_POS))[2], p[0], p[1], p[2], c[0], c[1], c[2], ax[0],
+         ax[1], ax[2], dmgBefore, *(float *)(t + 0x144));
     return hit;
 }
 

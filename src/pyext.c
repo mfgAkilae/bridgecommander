@@ -188,6 +188,18 @@ static PyObject *__cdecl m_forcehit(PyObject *self, PyObject *args)
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(torpedo_force(swig_ptr(t), swig_ptr(s)));
 }
 
+/* bcmpdll.forcereplay(torpedo.this, ship.this): last resort for a replay without a
+ * hit, after the script moved the torpedo just inside the impact point: run the
+ * collision now (see torpedo_force_replay); returns 1 if it hit */
+static PyObject *__cdecl m_forcereplay(PyObject *self, PyObject *args)
+{
+    const char *t = NULL, *s = NULL;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "ss", &t, &s))
+        return NULL;
+    return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(torpedo_force_replay(swig_ptr(t), swig_ptr(s)));
+}
+
 /* bcmpdll.authority(on): enable client-side torpedo hit suppression */
 static PyObject *__cdecl m_authority(PyObject *self, PyObject *args)
 {
@@ -244,6 +256,7 @@ static PyObject *__cdecl m_config(PyObject *self, PyObject *args)
 static PyMethodDef g_methods[] = {
     {"allowhit", m_allowhit, 1, NULL},
     {"forcehit", m_forcehit, 1, NULL},
+    {"forcereplay", m_forcereplay, 1, NULL},
     {"retire", m_retire, 1, NULL},
     {"authority", m_authority, 1, NULL},
     {"setlead", m_setlead, 1, NULL},

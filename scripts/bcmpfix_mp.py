@@ -37,7 +37,7 @@ g_dHitSent = {}             # host: torpedo id -> ms of its hit report
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
 g_lWaiting = []             # client: hit reports without a local copy yet: [deadline ms, target, shooter, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0}
+g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0, 'forced': 0}
 g_iNextStats = 0
 
 
@@ -454,11 +454,36 @@ def ExpirePending():
 			ReplayApproach(pTorp, pTarget, lEntry)
 			continue
 		del g_dPending[iID]
+		if pTorp and pTarget:
+			# last resort: run the collision at once from outside the ship to just inside
+			# the impact point, then to the centre (the host may report a point deep inside
+			# the hull), then as a shield hit, so the host's hit always shows
+			if ForceReplay(pTorp, pTarget, lEntry, 0.5, lEntry[6]) or ForceReplay(pTorp, pTarget, lEntry, 0.0, lEntry[6]) or ForceReplay(pTorp, pTarget, lEntry, 0.0, 0):
+				# like a replayed hit: retire our copy (it may still carry damage and stay
+				# inside the ship; once that ship explodes the game crashes on it)
+				bcmpdll.retire(pTorp.this)
+				g_dStats['forced'] = g_dStats['forced'] + 1
+				continue
 		if pTorp:
+			if pTarget and g_dStats['expired'] < 20:
+				kT = pTorp.GetWorldLocation()
+				kC = pTarget.GetWorldLocation()
+				fD = (kT.GetX() - kC.GetX()) * (kT.GetX() - kC.GetX()) + (kT.GetY() - kC.GetY()) * (kT.GetY() - kC.GetY()) + (kT.GetZ() - kC.GetZ()) * (kT.GetZ() - kC.GetZ())
+				DllLog('bcmpfix_mp: replay expired: target %s, torpedo %.1f from its centre, host saw %s' % (pTarget.GetName(), fD ** 0.5, ('shield', 'hull')[lEntry[6] != 0]))
 			bcmpdll.retire(pTorp.this)
 			g_dStats['expired'] = g_dStats['expired'] + 1
 		else:
 			g_dStats['lost'] = g_dStats['lost'] + 1
+
+def ForceReplay(pTorp, pTarget, lEntry, fDepth, iHull):
+	import bcmpdll
+	lTry = lEntry[:]
+	lTry[6] = iHull
+	ReplayApproach(pTorp, pTarget, lTry)
+	kC = pTarget.GetWorldLocation()
+	pTorp.SetTranslateXYZ(kC.GetX() + lEntry[3] * fDepth, kC.GetY() + lEntry[4] * fDepth, kC.GetZ() + lEntry[5] * fDepth)
+	pTorp.UpdateNodeOnly()
+	return bcmpdll.forcereplay(pTorp.this, pTarget.this)
 
 def FindTorpedo(pTarget, iShooter, fX, fY, fZ):
 	pSet = pTarget.GetContainingSet()
