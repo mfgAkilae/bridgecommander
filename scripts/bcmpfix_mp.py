@@ -21,7 +21,9 @@ MSG_BASE = App.MAX_MESSAGE_TYPES + 120
 MSG_HIT = MSG_BASE
 MSG_PING = MSG_BASE + 1
 MSG_PONG = MSG_BASE + 2
-MSG_BANKS = MSG_BASE + 3    # the phaser banks a ship's owner fires (bitmask)
+MSG_BANKS = MSG_BASE + 4    # the phaser banks a ship's owner fires, those that hit and those whose
+                            # beam is on an object (bitmasks);
+                            # MSG_BASE + 3 was v1.5.0's format without the hits, now ignored
 
 PING_INTERVAL_MS = 1000
 LEAD_INTERVAL_MS = 500
@@ -192,9 +194,10 @@ def OnNetMessage(pObject, pEvent):
 		import sys
 		LogError('OnNetMessage', sys.exc_type, sys.exc_value)
 
-# ---- phaser banks (PhaserSync) ----------------------------------------------------
-# The DLL watches which phaser banks of our own ship fire and calls SendBanks at once when
-# that changes; every other machine lets that ship's banks fire only while we fire them.
+# ---- phaser banks (PhaserHitAuthority) ---------------------------------------------
+# The DLL watches which phaser banks of our own ship fire and which of their beams are on
+# the target, and calls SendBanks at once when that changes; every other machine fires that
+# ship's banks only while we fire them, and shows their hits when ours do.
 
 def SendBanks():
 	try:
@@ -211,6 +214,8 @@ def SendBanks():
 		kStream.WriteInt(string.atoi(lParts[0]))
 		kStream.WriteInt(string.atoi(lParts[1]))
 		kStream.WriteInt(string.atoi(lParts[2]))
+		kStream.WriteInt(string.atoi(lParts[3]))
+		kStream.WriteInt(string.atoi(lParts[4]))
 		Finish(pMessage, kStream)
 		if App.g_kUtopiaModule.IsHost():
 			pNet.SendTGMessageToGroup('NoMe', pMessage)
@@ -229,7 +234,9 @@ def ReceiveBanks(pMessage, kStream):
 	iShip = kStream.ReadInt()
 	iBits = kStream.ReadInt()
 	iTarget = kStream.ReadInt()
-	bcmpdll.setbanks(iShip, iBits, iTarget)
+	iHits = kStream.ReadInt()
+	iOn = kStream.ReadInt()
+	bcmpdll.setbanks(iShip, iBits, iTarget, iHits, iOn)
 	if App.g_kUtopiaModule.IsHost():
 		# a client's ship: pass it on to the other clients
 		pNet = App.g_kUtopiaModule.GetNetwork()
@@ -237,6 +244,8 @@ def ReceiveBanks(pMessage, kStream):
 		kOut.WriteInt(iShip)
 		kOut.WriteInt(iBits)
 		kOut.WriteInt(iTarget)
+		kOut.WriteInt(iHits)
+		kOut.WriteInt(iOn)
 		Finish(pOut, kOut)
 		pNet.SendTGMessageToGroup('NoMe', pOut)
 

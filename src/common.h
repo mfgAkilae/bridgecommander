@@ -121,8 +121,10 @@ void scripterr_install(void);
 void join_install(void);
 void phaser_install(void);
 void phaser_frame(int pythonReady);
-void phaser_set_remote(DWORD ship, DWORD bits, DWORD target);
-int phaser_take(DWORD *ship, DWORD *bits, DWORD *target);
+void phaser_set_remote(DWORD ship, DWORD bits, DWORD target, DWORD hits, DWORD on);
+int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on);
+void phaser_stats2(unsigned long *arc, unsigned long *wait, unsigned long *driven, unsigned long *held,
+                   unsigned long *stopHits);
 void phaser_stats(unsigned long *gated, unsigned long *charged, unsigned long *sent, unsigned long *started,
                   unsigned long *stopped);
 unsigned long scripterr_count(void);

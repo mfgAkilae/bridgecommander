@@ -5,6 +5,7 @@ bcmpfix fixes the synchronisation errors in Bridge Commander multiplayer:
 - Ships jump or teleport to other places.
 - Ships are put back to an earlier position (rubber-banding).
 - A torpedo hits on one screen and misses on the other, and the ship explodes anyway.
+- A phaser beam hits on the shooter's screen and does no damage, or shows only on some screens.
 
 The mod is a DLL that loads as `dinput.dll` when the game starts, plus a small Python script. It does not change any game files: `stbc.exe`, the data and the original scripts stay untouched.
 
@@ -30,7 +31,8 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 
 - **Version:** The mod is written for `stbc.exe` version 1.1. It checks the original bytes before each change. If a location does not match, for example in another program version, the mod skips that change and writes `NOT applied` to the log. The game then runs unchanged.
 - **Mixed sessions:** Players without the mod can join. They keep the original behaviour, including the known errors.
-- **Host without the mod:** Torpedo synchronisation only turns on when the host runs the mod too. The mod detects this automatically.
+- **Host without the mod:** Torpedo and phaser synchronisation only turn on when the host runs the mod too. The mod detects this automatically.
+- **Older bcmpfix versions:** Players with v1.5.0 or older keep their own phaser decisions; all players should update.
 - **Other mods:** Mods that ship their own `dinput.dll` are not compatible with bcmpfix.
 - **Windows 10/11:** A graphics wrapper such as dgVoodoo2 (`DDraw.dll` + `D3DImm.dll`) is still recommended. It is independent of bcmpfix.
 
@@ -65,12 +67,24 @@ All players then see the same hits and misses as the host. Since v1.5.0 your com
 
 - **Torpedo paths:** Torpedoes fired by another player are created on your computer from the fire message. The original gave them more turning power and a longer guidance time there, re-aimed disruptor shots, and swapped two flags: they left the tube sideways and made no launch sound. bcmpfix keeps the shooter's values. This also matters on the host, whose copy decides the hit.
 
-### 3. Network and timing
+### 3. Phasers
+
+In the original game, only the start and stop of firing are sent. Each computer decides on its own, from its own view of both ships, which phaser banks can fire and when a beam reaches its target. Near the edge of a firing arc, or when the bank charges differ, the computers decide differently: in tests with six players, a bank that fired on the shooter's screen did not fire on another screen in about 22 % of the cases. The host applies the damage, so a hit the shooter saw sometimes did no damage at all.
+
+Since v1.6.0 the shooter's computer decides (`PhaserHitAuthority=1`):
+
+- It reports which of its phaser banks fire and which of their beams touch a ship and hit it.
+- The other computers fire exactly these banks, without their own firing-arc check, and keep them firing until the shooter stops.
+- A beam hits, and does damage on the host, when it does on the shooter's screen.
+
+In tests with six players, a client's phaser beam did damage on the host in 99–100 % of the beams (before 88–93 %). A beam the shooter hit was missing on another screen in 3–5 % instead of 13–16 %, and beams that only the other screens showed dropped from 44–70 to 1–11 per run. The beams still start later on the other screens than on the shooter's: about 0.22 s with 60 ms network latency per direction (before 0.27 s).
+
+### 4. Network and timing
 
 - **Resending lost packets:** Guaranteed messages (firing, cloaking, deaths, game events) arrive in a fixed order. A lost packet used to hold up all following messages for at least 1 s. Now the resend happens after 0.3 s.
 - **Game clock:** The game clock was computed from the time since Windows started and stored as a 32-bit float. After days of uptime, frame timing became inaccurate by up to ±15 ms. Windows Fast Startup does not reset this time on shutdown. Now the clock counts from program start.
 
-### 4. Joining and freezes
+### 5. Joining and freezes
 
 - **Joining a running game:** If a player's ship arrived while you were still joining, the game's own mission script failed. In windowed mode the game then froze. bcmpfix skips the failing step until the game is ready for it.
 - **Invisible ship after joining:** If another player spawned a ship while you were joining, that ship could stay invisible on your screen for the whole game. bcmpfix shows it when the host sends it again during your join.

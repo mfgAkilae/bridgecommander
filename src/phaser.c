@@ -1,24 +1,30 @@
-/* Phaser bank replication (PhaserSync, issue #22).
+/* Phaser bank replication and hit authority (PhaserHitAuthority, issue #22).
  *
  * The network carries only the weapon system's start/stop firing commands (opcodes 7/8/9).
  * Every machine then decides per bank and frame whether it fires (PhaserBank::Fire
  * 0x00570FE0: CanFire 0x00571E60 = charge, then range and arc 0x005714A0 against its own,
  * latency-shifted view of both ships). Near the edge of an arc, or after the charges have
- * drifted apart, the decisions differ: in six-player tests 17 % of a shooter's bank
+ * drifted apart, the decisions differ: in six-player tests 22 % of a shooter's bank
  * firings did not happen on a given other machine, and other machines fired banks the
  * shooter did not fire. The host applies the damage, so the shooter's hit did no damage.
  *
- * Here the owner of a ship reports which of its phaser banks fire (bitmask, sent by the
- * script as soon as it changes), and every other machine lets a bank of that ship fire
- * only while its owner fires it; while it does, a low local charge does not stop it.
- * PhaserSync=1 also starts such banks itself, 2 only blocks and stops.
+ * Here the owner of a ship reports which of its phaser banks fire, which of their beams'
+ * rays are on an object (+0xFC) and which of these hit (beam state 3), sent by the script as
+ * soon as that changes. Every other machine lets a bank of that ship fire only while its owner fires it;
+ * while it does, a low local charge does not stop it.
  *
- * Experimental, off by default: in six-player tests the banks matched (bank firings only
- * on the shooter 16.5 % -> 8.5-12 %, banks fired only on other machines 170 -> 0, beams
- * other machines showed and the shooter did not 71 -> 1-4), but the hits did not: the
- * other machines' beams still start about 280 ms late and end about 100 ms earlier, and a
- * beam that touches the target for less than about 300 ms shows no hit. Beams the shooter
- * hit and another machine did not show went from 15.9 % to 17.7-20.2 %. */
+ * Mode 3 (PhaserHitAuthority=1, default) also makes the beam follow the owner's: the bank
+ * fires without the local arc test and the start wait, only the owner's stop ends it, the
+ * beam reaches its hit state when the owner's does (not by the local 0.25 s growth timer),
+ * a bank the weapon system does not feed is driven with the frame time (the host
+ * applies its damage with it), and the hit that StopFiring applies to the ray's object
+ * is applied only if the owner's ray was on an object at its stop. Six players, 60 ms:
+ * bank firings only on the shooter 19-23 % -> 7-8 %; beams the shooter hit and another
+ * machine did not show 13-16 % -> 2.5-4 %; beams other machines showed and the shooter did
+ * not 44-70 -> 3-10; client shooters' beams without damage on the host 7-12 % -> 0-1.3 %.
+ *
+ * Without it, PhaserSync=1 (experimental, v1.5.0) starts such banks with the stock checks,
+ * 2 only blocks and stops them; the banks then match but the hits do not. */
 #include "common.h"
 
 #define ADDR_CUR_GAME 0x0097E238 /* Game_GetCurrentGame */
@@ -31,6 +37,8 @@
 #define BANK_FIRING 0x88   /* Weapon::IsFiring */
 #define BANK_TARGET 0x8C   /* target object ID, then the offset on it (+0x90) */
 #define BANK_CHARGE 0xA0   /* EnergyWeapon charge level */
+#define BANK_BEAM_STATE 0xF4 /* 1 wait, 2 growing, 3 on the target (hits) */
+#define BANK_BEAM_OBJECT 0xFC /* ID of the object the beam's ray touches (states 2 and 3), else 0 */
 #define ADDR_FIND_OBJECT 0x00430730 /* cdecl(0, id) */
 #define TYPE_SHIP 0x8008
 #define PHASERBANK_VTABLE 0x00893194
@@ -48,14 +56,30 @@ static struct {
     DWORD ship;
     DWORD bits;
     DWORD target;
-    double retry[32]; /* next start attempt per bank (a failed Fire is retried every 100 ms) */
+    DWORD hits;            /* banks whose beam hits (state 3, ray on an object) on the owner's machine */
+    DWORD on;              /* banks whose beam's ray is on an object (states 2 and 3) there */
+    DWORD stopOn;          /* banks whose beam was on an object when the owner stopped it */
+    double retry[32];      /* next start attempt per bank (a failed Fire is retried every 100 ms) */
+    unsigned long fed[32]; /* frame of the last Fire call (the weapon system feeds firing banks) */
 } g_remote[MAXREMOTE];
 
-static DWORD g_ownShip, g_ownBits, g_ownTarget, g_sentShip, g_sentBits;
+/* PhaserSync=3 (hit authority): a bank of a remote ship that its owner fires is driven to
+ * its hit state as on the owner's machine. Context for the hooks below while Fire runs. */
+static BYTE *g_curBank;
+static float g_curGrowth;
+static int g_curSlot, g_curIdx;
+static int g_allowStop;
+static unsigned long g_frame;
+static double g_lastFrameT;
+static float g_dt = 0.016f;
+static unsigned long g_forcedArc, g_skippedWait, g_driven, g_skippedStopHit;
+
+static DWORD g_ownShip, g_ownBits, g_ownTarget, g_ownHits, g_ownOn, g_sentShip, g_sentBits, g_sentHits, g_sentOn;
 static int g_pending;
 static unsigned long g_gated, g_forcedCharge, g_sent;
 
 static BYTE *local_ship(void);
+static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2);
 typedef BYTE *(__cdecl *PFN_FindObject)(int kind, DWORD id);
 typedef char(__fastcall *PFN_IsA)(void *obj, void *edx, int type);
 static unsigned long g_started, g_stopped;
@@ -76,6 +100,13 @@ static void enforce_remote(void)
 {
     double t = now_sec();
     int s, i, n;
+    g_frame++;
+    if (g_lastFrameT > 0.0) {
+        g_dt = (float)(t - g_lastFrameT);
+        if (g_dt > 0.1f)
+            g_dt = 0.1f;
+    }
+    g_lastFrameT = t;
     for (s = 0; s < MAXREMOTE; s++) {
         BYTE *ship, *sys, **arr;
         if (!g_remote[s].ship)
@@ -94,15 +125,26 @@ static void enforce_remote(void)
             if (!b)
                 continue;
             if (!want && b[BANK_FIRING]) {
+                g_allowStop = 1;
                 ((PFN_Stop)(*(void ***)b)[VT_STOP / 4])(b, 0);
+                g_allowStop = 0;
                 g_stopped++;
-            } else if (want && !b[BANK_FIRING] && g_cfg.phaserSync == 1 && g_remote[s].target && t >= g_remote[s].retry[i]) {
+            } else if (want && !b[BANK_FIRING] && g_cfg.phaserSync != 2 && g_remote[s].target &&
+                       (g_cfg.phaserSync >= 3 || t >= g_remote[s].retry[i])) {
+                float dt = g_dt;
                 g_remote[s].retry[i] = t + 0.1;
-                *(DWORD *)(b + BANK_TARGET) = g_remote[s].target;
-                memset(b + BANK_TARGET + 4, 0, 12); /* offset on the target: its centre */
-                ensure_charge(b);
-                if (((PFN_Fire)ADDR_FIRE)(b, 0, 0, 1))
+                if (*(DWORD *)(b + BANK_TARGET) != g_remote[s].target) {
+                    *(DWORD *)(b + BANK_TARGET) = g_remote[s].target;
+                    memset(b + BANK_TARGET + 4, 0, 12); /* offset on the target: its centre */
+                }
+                if (hk_Fire(b, 0, *(int *)&dt, 1))
                     g_started++;
+            } else if (want && b[BANK_FIRING] && g_cfg.phaserSync >= 3 && g_remote[s].fed[i] + 1 < g_frame) {
+                /* the weapon system does not feed it (its start/stop command differs): keep
+                 * the beam going, with the frame time (the host applies damage with it) */
+                float dt = g_dt;
+                hk_Fire(b, 0, *(int *)&dt, 1);
+                g_driven++;
             }
         }
     }
@@ -148,19 +190,24 @@ static int remote_slot(DWORD ship, int create)
 }
 
 /* script: the owner of `ship` fires the banks in `bits` at `target` */
-void phaser_set_remote(DWORD ship, DWORD bits, DWORD target)
+void phaser_set_remote(DWORD ship, DWORD bits, DWORD target, DWORD hits, DWORD on)
 {
     BYTE *own = local_ship();
     int i;
     if (own && *(DWORD *)(own + 4) == ship)
         return;
     i = remote_slot(ship, 1);
+    /* banks the owner stops now: was their beam on an object (the stop then applies a hit)? */
+    g_remote[i].stopOn = (g_remote[i].on & g_remote[i].bits & ~bits) | (g_remote[i].stopOn & ~g_remote[i].bits & ~bits) |
+                         (on & bits);
     g_remote[i].bits = bits;
     g_remote[i].target = target;
+    g_remote[i].hits = hits;
+    g_remote[i].on = on;
 }
 
 /* script: the next state of our own ship to send; 0 if nothing changed */
-int phaser_take(DWORD *ship, DWORD *bits, DWORD *target)
+int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on)
 {
     if (!g_pending)
         return 0;
@@ -168,8 +215,12 @@ int phaser_take(DWORD *ship, DWORD *bits, DWORD *target)
     *ship = g_ownShip;
     *bits = g_ownBits;
     *target = g_ownTarget;
+    *hits = g_ownHits;
+    *on = g_ownOn;
     g_sentShip = g_ownShip;
     g_sentBits = g_ownBits;
+    g_sentHits = g_ownHits;
+    g_sentOn = g_ownOn;
     g_sent++;
     return 1;
 }
@@ -178,7 +229,7 @@ int phaser_take(DWORD *ship, DWORD *bits, DWORD *target)
 void phaser_frame(int pythonReady)
 {
     BYTE *ship = local_ship(), *sys, **arr;
-    DWORD bits = 0, id, target = 0;
+    DWORD bits = 0, id, target = 0, hits = 0, on = 0;
     int n, i;
     if (!g_cfg.phaserSync)
         return;
@@ -193,16 +244,23 @@ void phaser_frame(int pythonReady)
     for (i = 0; i < n && i < 32 && arr; i++)
         if (arr[i] && arr[i][BANK_FIRING]) {
             bits |= 1u << i;
+            if (*(DWORD *)(arr[i] + BANK_BEAM_OBJECT)) {
+                on |= 1u << i;
+                if (*(int *)(arr[i] + BANK_BEAM_STATE) == 3)
+                    hits |= 1u << i;
+            }
             if (!target)
                 target = *(DWORD *)(arr[i] + BANK_TARGET);
         }
     id = *(DWORD *)(ship + 4);
-    if (id == g_ownShip && bits == g_ownBits)
+    if (id == g_ownShip && bits == g_ownBits && hits == g_ownHits && on == g_ownOn)
         return;
     g_ownShip = id;
     g_ownBits = bits;
     g_ownTarget = target;
-    if (id == g_sentShip && bits == g_sentBits)
+    g_ownHits = hits;
+    g_ownOn = on;
+    if (id == g_sentShip && bits == g_sentBits && hits == g_sentHits && on == g_sentOn)
         return;
     g_pending = 1;
     if (pythonReady)
@@ -216,18 +274,138 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2)
     if (ship && ship != local_ship()) {
         int slot = remote_slot(*(DWORD *)(ship + 4), 0), idx;
         if (slot >= 0 && (idx = bank_index(ship, b)) >= 0) {
+            char r;
             if (!(g_remote[slot].bits & (1u << idx))) {
                 /* the owner does not fire this bank */
                 g_gated++;
-                if (b[BANK_FIRING])
+                if (b[BANK_FIRING]) {
+                    g_allowStop = 1;
                     ((PFN_Stop)(*(void ***)bank)[VT_STOP / 4])(bank, 0);
+                    g_allowStop = 0;
+                }
                 return 0;
             }
             /* the owner fires it: our copy's charge must not stop it */
             ensure_charge(b);
+            g_remote[slot].fed[idx] = g_frame;
+            if (g_cfg.phaserSync < 3)
+                return ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);
+            {
+                int ms = lead_get_fire(*(DWORD *)(ship + 4));
+                g_curGrowth = 0.25f - ms / 1000.0f;
+                if (g_curGrowth < 0.02f)
+                    g_curGrowth = 0.02f;
+            }
+            g_curBank = b;
+            g_curSlot = slot;
+            g_curIdx = idx;
+            r = ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);
+            g_curBank = NULL;
+            return r;
         }
     }
     return ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);
+}
+
+/* PhaserSync=3 hooks, active only while Fire runs for a bank its owner fires (g_curBank) */
+#define ADDR_CALL_ARC 0x00571134  /* PhaserBank::Fire -> arc test 0x005714A0 */
+#define ADDR_ARC 0x005714A0
+#define ADDR_CALL_WAIT 0x00572216 /* beam state 1: wait (0x004E7200) */
+#define ADDR_WAIT 0x004E7200
+#define ADDR_CALL_GROW 0x00572248 /* beam state 1 -> 2: growth timer of 0.25 s (0x004E75B0) */
+#define ADDR_GROW 0x004E75B0
+#define ADDR_STOP 0x00571200
+#define ADDR_CALL_GROWN 0x005721D8 /* beam state 2: growth done? (0x004E7580) -> state 3, hit */
+#define ADDR_GROWN 0x004E7580
+#define ADDR_CALL_STOPHIT 0x00571374 /* StopFiring: apply the hit on the beam's object (0x005722B0) */
+#define ADDR_HIT 0x005722B0
+typedef char(__fastcall *PFN_Arc)(void *bank, void *edx, void *a1, void *a2, float *a3);
+typedef char(__fastcall *PFN_Wait)(void *beam, void *edx, float t, float p);
+typedef void(__fastcall *PFN_Grow)(void *beam, void *edx, float t, float dur);
+typedef char(__fastcall *PFN_Grown)(void *beam, void *edx);
+typedef void(__fastcall *PFN_Hit)(void *bank, void *edx);
+static void *o_StopHit;
+static void *o_Arc, *o_Wait, *o_Grow, *o_Grown;
+static unsigned long g_heldGrowth;
+
+/* the owner fired this bank: its arc was clear on the owner's machine */
+static char __fastcall hk_Arc(void *bank, void *edx, void *a1, void *a2, float *a3)
+{
+    char r = ((PFN_Arc)o_Arc)(bank, edx, a1, a2, a3);
+    if (!r && bank == g_curBank) {
+        g_forcedArc++;
+        return 1;
+    }
+    return r;
+}
+
+/* skip the wait before the beam starts to grow */
+static char __fastcall hk_Wait(void *beam, void *edx, float t, float p)
+{
+    if (g_curBank) {
+        g_skippedWait++;
+        return 1;
+    }
+    return ((PFN_Wait)o_Wait)(beam, edx, t, p);
+}
+
+/* shorten the 0.25 s growth by the latency, so the hit shows when it does for the owner */
+static void __fastcall hk_Grow(void *beam, void *edx, float t, float dur)
+{
+    if (g_curBank)
+        dur = g_curGrowth;
+    ((PFN_Grow)o_Grow)(beam, edx, t, dur);
+}
+
+/* PhaserSync=3: the beam reaches the target (hit state) when it does on the owner's machine */
+static char __fastcall hk_Grown(void *beam, void *edx)
+{
+    if (g_curBank) {
+        if (g_remote[g_curSlot].hits & (1u << g_curIdx))
+            return 1;
+        g_heldGrowth++;
+        return 0;
+    }
+    return ((PFN_Grown)o_Grown)(beam, edx);
+}
+
+/* A bank that stops with its beam's ray on an object applies a hit, also before the beam
+ * reached it (state 2). Our copy skips the start wait, so its ray is on the target earlier
+ * than the owner's: apply that hit only when the owner's beam was on an object at its stop. */
+static void __fastcall hk_StopHit(void *bank, void *edx)
+{
+    BYTE *b = (BYTE *)bank, *ship = *(BYTE **)(b + BANK_SHIP);
+    if (ship && ship != local_ship()) {
+        int slot = remote_slot(*(DWORD *)(ship + 4), 0), idx;
+        if (slot >= 0 && (idx = bank_index(ship, b)) >= 0 && !(g_remote[slot].stopOn & (1u << idx))) {
+            g_skippedStopHit++;
+            return;
+        }
+    }
+    ((PFN_Hit)o_StopHit)(bank, edx);
+}
+
+/* while the owner fires a bank, only the owner's stop ends it */
+static void __fastcall hk_Stop(void *bank, void *edx)
+{
+    BYTE *b = (BYTE *)bank, *ship = *(BYTE **)(b + BANK_SHIP);
+    (void)edx;
+    if (!g_allowStop && g_cfg.phaserSync >= 3 && ship && ship != local_ship()) {
+        int slot = remote_slot(*(DWORD *)(ship + 4), 0), idx;
+        if (slot >= 0 && (idx = bank_index(ship, b)) >= 0 && (g_remote[slot].bits & (1u << idx)))
+            return;
+    }
+    ((PFN_Stop)ADDR_STOP)(bank, 0);
+}
+
+void phaser_stats2(unsigned long *arc, unsigned long *wait, unsigned long *driven, unsigned long *held,
+                   unsigned long *stopHits)
+{
+    *arc = g_forcedArc;
+    *wait = g_skippedWait;
+    *driven = g_driven;
+    *held = g_heldGrowth;
+    *stopHits = g_skippedStopHit;
 }
 
 void phaser_stats(unsigned long *gated, unsigned long *charged, unsigned long *sent, unsigned long *started,
@@ -251,4 +429,17 @@ void phaser_install(void)
     }
     mem_write(slot, &hook, 4);
     logf("PATCH phaser sync (remote phaser banks fire only when their owner fires them): applied");
+    if (g_cfg.phaserSync >= 3) {
+        void *stopSlot = (void *)(PHASERBANK_VTABLE + VT_STOP), *stopHook = (void *)hk_Stop;
+        redirect_call(ADDR_CALL_ARC, (void *)hk_Arc, &o_Arc, ADDR_ARC, "phaser hit authority: owner's arc");
+        redirect_call(ADDR_CALL_WAIT, (void *)hk_Wait, &o_Wait, ADDR_WAIT, "phaser hit authority: no start wait");
+        redirect_call(ADDR_CALL_GROW, (void *)hk_Grow, &o_Grow, ADDR_GROW, "phaser hit authority: growth minus latency");
+        redirect_call(ADDR_CALL_GROWN, (void *)hk_Grown, &o_Grown, ADDR_GROWN, "phaser hit authority: hit when the owner hits");
+        redirect_call(ADDR_CALL_STOPHIT, (void *)hk_StopHit, &o_StopHit, ADDR_HIT,
+                      "phaser hit authority: hit at the stop only if the owner's beam was on an object");
+        if (*(DWORD *)stopSlot == ADDR_STOP) {
+            mem_write(stopSlot, &stopHook, 4);
+            logf("PATCH phaser hit authority: stop only by the owner: applied");
+        }
+    }
 }

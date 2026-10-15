@@ -174,35 +174,36 @@ static PyObject *__cdecl m_setfirelead(PyObject *self, PyObject *args)
  * since the last call, else "" */
 static PyObject *__cdecl m_takebanks(PyObject *self, PyObject *args)
 {
-    DWORD ship, bits, target;
-    char buf[64] = "";
+    DWORD ship, bits, target, hits, on;
+    char buf[96] = "";
     (void)self;
     (void)args;
-    if (phaser_take(&ship, &bits, &target))
-        _snprintf(buf, sizeof(buf), "%lu %lu %lu", ship, bits, target);
+    if (phaser_take(&ship, &bits, &target, &hits, &on))
+        _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", ship, bits, target, hits, on);
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
 /* bcmpdll.setbanks(ship, bits, target): the owner of that ship fires these phaser banks */
 static PyObject *__cdecl m_setbanks(PyObject *self, PyObject *args)
 {
-    int ship = 0, bits = 0, target = 0;
+    int ship = 0, bits = 0, target = 0, hits = 0, on = 0;
     (void)self;
-    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "iii", &ship, &bits, &target))
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "iii|ii", &ship, &bits, &target, &hits, &on))
         return NULL;
-    phaser_set_remote((DWORD)ship, (DWORD)bits, (DWORD)target);
+    phaser_set_remote((DWORD)ship, (DWORD)bits, (DWORD)target, (DWORD)hits, (DWORD)on);
     return py_none();
 }
 
 /* bcmpdll.phaserstats(): "gated charged sent started stopped" */
 static PyObject *__cdecl m_phaserstats(PyObject *self, PyObject *args)
 {
-    unsigned long g, c, s, st, sp;
-    char buf[96];
+    unsigned long g, c, s, st, sp, ar, wt, dr, hd, sh;
+    char buf[160];
     (void)self;
     (void)args;
     phaser_stats(&g, &c, &s, &st, &sp);
-    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", g, c, s, st, sp);
+    phaser_stats2(&ar, &wt, &dr, &hd, &sh);
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", g, c, s, st, sp, ar, wt, dr, hd, sh);
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 

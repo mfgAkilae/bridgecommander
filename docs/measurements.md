@@ -522,3 +522,85 @@ Torpedo hit timing (six players): client − host −65, −67, −71 ms; client
 host − shooter +79 … +85 ms (the host applies the damage with its own copy). Predicted hits 282–382 per
 run, not confirmed 2–11, replays 30–71. Kick test: peak error median 3.4 units, max 6.0. Join test:
 every client saw every ship. Installer update from v1.4.0 tested. No crashes.
+
+## Issue #22: phaser hit authority (v1.6.0, `PhaserHitAuthority=1`)
+
+Bank sync alone (v1.5.0, `PhaserSync=1`) matched the banks but not the hits. With hit authority the
+owner also reports its beams' hit state, and the other peers' beams follow: no local arc test, no
+start wait, no stock stop while the owner fires, and the bank is driven with the frame time when the
+weapon system does not feed it (the host's damage). `tools/banks.py`, `tools/phasers.py` and
+`tools/combat.py`; six players, 180 s, 60 ms ±20 ms, 1 % loss, development builds in steps:
+
+1. original decisions (v1.5.0 default), 2 runs;
+2. hit authority, the beam hits by the local growth timer shortened by the latency, 2 runs;
+3. the beam hits when the owner's is in state 3, 4 runs;
+4. as 3, state 3 only with the owner's ray on an object, and the hit that StopFiring applies only if
+   the owner's ray was on an object at its stop (v1.6.0), 2 runs.
+
+| | 1 | 2 | 3 | 4 (v1.6.0) |
+|---|---|---|---|---|
+| bank firings of the shooter missing on another peer | 22.1–23.1 % | 6.1–6.6 % | 5.4–8.2 % | 6.9–7.9 % |
+| bank firings only on another peer | 213–228 | 1–5 | 0–10 | 0–3 |
+| start delay on the other peer (median) | 273–279 ms | 222–225 ms | 222–234 ms | 219–221 ms |
+| beams the shooter hit and another peer did not show | 14.1–15.6 % | 3.3–3.7 % | 3.5–4.8 % | 2.5–4.1 % |
+| client shooters' beams the host did not show (no damage) | 6.4–10.9 % | 0.0 % | 0.0–0.9 % | 0.0–1.3 % |
+| host's beams a client did not show | 13.8–19.4 % | 2.7–5.3 % | 4.1–7.8 % | 5.5 % |
+| beams another peer showed and the shooter did not | 58–70 | 103–117 | 43–118 | 3–10 |
+| of these with more than one hit event | 4–6 | 55–61 | 0–5 | 0–3 |
+| of these on the host (damage) | 5–9 | 13–15 | 8–22 | 1–3 |
+| host's phaser hits (0.5 s bins) also on a client | 93–95 % | 99–100 % | 96–100 % | 100 % |
+
+Step 2: a forced beam also hit where the shooter's beam did not (longer beams only other peers
+showed). Step 3 removed those, but left single hit events that only other peers showed, up to twice
+as many as with the original decisions. Their cause: StopFiring applies a last hit to the object the
+beam's ray touches (+0xFC), also while the beam still grows (state 2). The other peers skip the
+start wait, so their ray touches the target earlier than the shooter's; a beam the shooter stopped
+during its start wait (or with its ray beside the target) showed one hit on the other peers and none
+on the shooter. Step 4 reports the ray's object as a third bit mask and applies the stop's hit only
+when the owner's ray was on an object.
+
+The remaining missing beams are mostly on clients: a client's report reaches the other clients
+through the host, one latency later, and beams up to 1 s long make up most of them.
+
+Hull differences of the clients against the host (`combat.py`, samples with more than 5 % of the
+maximum hull apart) varied from 4 to 89 per run without a clear difference between the steps; viewer
+stalls in the sandbox (frame gaps of 0.5–1 s, all ships jump at once) cause part of them.
+
+Settings: `PhaserHitAuthority=1` (default) uses mode 3 of the phaser sync; with
+`PhaserHitAuthority=0`, `PhaserSync=1` or `2` select the v1.5.0 bank-only modes. The report uses a
+new message type (`MSG_BASE + 4`, five integers: ship, firing banks, target, banks that hit, banks
+whose ray is on an object): v1.5.0 peers ignore it, and v1.6.0 ignores v1.5.0's bank reports.
+
+## v1.6.0 release check
+
+Exact release build, default settings (`PhaserHitAuthority=1`, `PredictTorpedoHits=1`,
+`TorpedoLatencyCompensation=1`). Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.14, 0.0 % | 0.04 / 0.09, 0.0 % | – | 4 of 4 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.11 / 0.22, 0.0 % | 0.07 / 0.13, 0.0 % | – | 3 of 3 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.13, 0.0 % | 0.05 / 0.11, 0.0 % | 0.07 / 0.14, 0.1 % | 94 of 94 |
+| 6 players, 60 ms (second run) | 0.06 / 0.11, 0.0 % | 0.05 / 0.09, 0.0 % | 0.07 / 0.15, 0.0 % | 89 of 90 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.11, 0.0 % | 0.05 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 61 of 61 |
+
+Phasers against the v1.5.0 release check (the same three six-player runs each: two plain, one with
+all hulls at 5 % after 40 s):
+
+| | v1.5.0 | v1.6.0 |
+|---|---|---|
+| bank firings of the shooter missing on another peer | 18.7–22.7 % | 5.2–6.3 % |
+| bank firings only on another peer | 154–258 | 0–5 |
+| start delay on the other peer (median) | 271–279 ms | 223–224 ms |
+| beams the shooter hit and another peer did not show | 13.0–15.7 % | 3.3–4.7 % |
+| client shooters' beams the host did not show (no damage) | 7.1–12.0 % | 0.0 % |
+| host's beams a client did not show | 14.3–19.5 % | 5.5–6.4 % |
+| beams another peer showed and the shooter did not (on the host) | 44–70 (8–12) | 1–11 (0–1) |
+| host's phaser hits (0.5 s bins) also on a client | 91–97 % | 99–100 % |
+| hull divergences > 5 % of the maximum (`combat.py`) | 18–90 | 11–36 |
+
+Torpedo hits: client − host −71, −66, −65 ms (median); shield/hull differed on 10, 1 and 1 matched
+hits (v1.5.0 release check: 16, 9, 19). Kick test: peak error median 3.6 units, max 5.7. Join test:
+every client saw every ship. Installer update from v1.5.0 tested; the kept `bcmpfix.ini` has
+`PhaserSync=0` and no `PhaserHitAuthority`, and a run with that setting logged every hit authority
+hook as applied. No crashes.

@@ -44,8 +44,8 @@ def overlaps(b, lst, slack=700):
 
 def main():
     tot = {'shooter': 0, 'seen': 0, 'missing': 0, 'others_only': 0, 'by_host': 0, 'host_missing': 0,
-           'host_beams': 0, 'host_beams_missing': 0}
-    lens_missing, lens_seen = [], []
+           'host_beams': 0, 'host_beams_missing': 0, 'others_only_host': 0}
+    lens_missing, lens_seen, lens_others = [], [], []
     for run in sys.argv[1:]:
         logs = {}
         for f in os.listdir(run):
@@ -78,14 +78,14 @@ def main():
             for r, lg in logs.items():
                 if r == shooter_role:
                     continue
-                for b in lg.get((name, None), []):
-                    pass
                 for (src, tgt), bl in lg.items():
                     if src != name:
                         continue
                     for b in bl:
                         if not overlaps(b, own.get((src, tgt), [])):
                             tot['others_only'] += 1
+                            tot['others_only_host'] += r == 'host'
+                            lens_others.append((b[1] - b[0], b[2]))
     n = max(tot['shooter'], 1)
     print('beams of the shooter x other peers: %d; also shown %d (%.1f %%), missing %d (%.1f %%); '
           'beams other peers show and the shooter does not: %d' % (
@@ -104,6 +104,8 @@ def main():
             h[key] = h.get(key, 0) + 1
         return h
     print('  missing beams by length:', hist(lens_missing), ' shown beams:', hist(lens_seen))
+    print('  beams other peers show and the shooter does not: %d on the host (damage); by length:' % tot['others_only_host'],
+          hist(lens_others))
 
 
 if __name__ == '__main__':
