@@ -245,3 +245,16 @@ comes straight from their owner (the host's ship, and clients' ships as the host
 clearly worse. The velocity from position differences describes the past update interval and is
 smoothed, so in continuous turns it lags; the reported nose is the state at send time, and the proxy's
 own physics adds the drift of its ship class. Not enabled by default (`VelocityExtrapolation=0`).
+
+## v1.2.1 release check
+
+Exact release build, default settings (`OrientationCorrection=1`, velocity and arc extrapolation off):
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.34 / 0.46, 0.0 % | 0.19 / 0.34, 0.0 % | – | 6 of 6 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.30 / 0.50, 0.1 % | 0.31 / 0.61, 0.0 % | – | 14 of 14 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.39 / 0.67, 0.6 % | 0.23 / 0.40, 0.0 % | 0.39 / 0.79, 0.0 % | 72 of 75 seen by all, 1 by none |
+
+(mean / 95th percentile, backward steps.) No hangs or script errors. The six-player run had 21
+shield/hull mismatches among the matched torpedo hits (earlier runs: 0–12), see issue #15.

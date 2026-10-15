@@ -129,7 +129,9 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Tested with up to six players in one sandbox, not over the internet and not with a dedicated
   server (#13). Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
-- A small lateral error remains during hard turns (extrapolation follows the forward vector only) (#11).
+- A lateral error of about 0.2–0.5 units remains during turns: ships drift (their velocity lags the
+  nose), and the game extrapolates along the nose. Turn prediction and velocity-based extrapolation
+  were tried and were worse overall (#11, `docs/measurements.md`).
 - Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
   host-confirmed hit fails on the client and the hit is not shown there (#15; improved in
   v1.1.0: 80 of 87 hits seen by all five clients in a six-player game, 1 by none).

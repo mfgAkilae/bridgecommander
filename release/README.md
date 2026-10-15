@@ -44,6 +44,7 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 - **Slow correction:** Remote ships were pulled to their network position with a time constant of about 1 s. Errors below 0.5 units were not corrected at all.
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
   - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
+  - A ship whose nose lags more than 30° behind the direction its owner reported (after a sharp turn) is turned towards it, so it does not fly the wrong way and drift back.
 - **Three or more players:** The host passes on each player's ship as that player reported it (position, direction, speed), not its own smoothed copy.
 - **Latency compensation:** Players measure the network round trip to each other with pings. Remote ships are extrapolated by that time. Without this, you see every ship where it was one network latency ago.
 
