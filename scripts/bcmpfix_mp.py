@@ -21,9 +21,10 @@ MSG_BASE = App.MAX_MESSAGE_TYPES + 120
 MSG_HIT = MSG_BASE
 MSG_PING = MSG_BASE + 1
 MSG_PONG = MSG_BASE + 2
-MSG_BANKS = MSG_BASE + 4    # the phaser banks a ship's owner fires, those that hit and those whose
-                            # beam is on an object (bitmasks);
-                            # MSG_BASE + 3 was v1.5.0's format without the hits, now ignored
+MSG_DIRECT = MSG_BASE + 6   # host: "send me and the others your phaser reports directly" (direct.c)
+MSG_BANKS = MSG_BASE + 5    # the phaser banks a ship's owner fires, those that hit and those whose
+                            # beam is on an object (bitmasks), with the owner's sequence number;
+                            # MSG_BASE + 3 (v1.5.0) and + 4 (v1.6.0) are older formats, now ignored
 
 PING_INTERVAL_MS = 1000
 LEAD_INTERVAL_MS = 500
@@ -35,6 +36,7 @@ PREDICT_KEEP_MS = 2000      # how long a predicted hit waits for the host's repo
 
 g_idMission = None
 g_bHostHasMod = 0
+g_iDirectHost = -1    # net ID of the host that announced direct phaser reports
 g_dRtt = {}                 # net id -> smoothed round trip time in ms
 g_iNextPing = 0
 g_iNextLead = 0
@@ -92,6 +94,12 @@ def DoTick():
 	if t >= g_iNextPing:
 		g_iNextPing = t + PING_INTERVAL_MS
 		SendPings(pNet, t)
+		import bcmpdll
+		if App.g_kUtopiaModule.IsHost() and Cfg('DirectPhaserReports') > 0:
+			(pDirect, kDirect) = NewMessage(MSG_DIRECT, 0)
+			Finish(pDirect, kDirect)
+			pNet.SendTGMessageToGroup('NoMe', pDirect)
+		bcmpdll.netrole(App.g_kUtopiaModule.IsHost(), g_iDirectHost == pNet.GetHostID())
 	if t >= g_iNextLead:
 		g_iNextLead = t + LEAD_INTERVAL_MS
 		if Cfg('LatencyCompensation') > 0:
@@ -99,7 +107,7 @@ def DoTick():
 	if Cfg('Verbose') > 0 and t >= g_iNextStats:
 		g_iNextStats = t + 10000
 		import bcmpdll
-		DllLog('bcmpfix_mp stats %s rtt=%s torp(suppressed allowed)=%s phasers(gated charged sent)=%s' % (str(g_dStats), str(g_dRtt), bcmpdll.torpstats(), bcmpdll.phaserstats()))
+		DllLog('bcmpfix_mp stats %s rtt=%s torp(suppressed allowed)=%s phasers(gated charged sent)=%s direct(sent received peers)=%s' % (str(g_dStats), str(g_dRtt), bcmpdll.torpstats(), bcmpdll.phaserstats(), bcmpdll.directstats()))
 
 # ---- join fix -------------------------------------------------------------
 # The missions' RebuildInfoPane (Mission1/2/3/5Menus) runs when a player ship is
@@ -189,6 +197,8 @@ def OnNetMessage(pObject, pEvent):
 			ReceivePong(pMessage, kStream)
 		elif iType == MSG_BANKS:
 			ReceiveBanks(pMessage, kStream)
+		elif iType == MSG_DIRECT:
+			ReceiveDirect(pMessage)
 		kStream.Close()
 	except:
 		import sys
@@ -216,6 +226,7 @@ def SendBanks():
 		kStream.WriteInt(string.atoi(lParts[2]))
 		kStream.WriteInt(string.atoi(lParts[3]))
 		kStream.WriteInt(string.atoi(lParts[4]))
+		kStream.WriteInt(string.atoi(lParts[5]))
 		Finish(pMessage, kStream)
 		if App.g_kUtopiaModule.IsHost():
 			pNet.SendTGMessageToGroup('NoMe', pMessage)
@@ -224,6 +235,12 @@ def SendBanks():
 	except:
 		import sys
 		LogError('SendBanks', sys.exc_type, sys.exc_value)
+
+def ReceiveDirect(pMessage):
+	global g_iDirectHost
+	pNet = App.g_kUtopiaModule.GetNetwork()
+	if pNet and not App.g_kUtopiaModule.IsHost() and pMessage.GetFromID() == pNet.GetHostID():
+		g_iDirectHost = pMessage.GetFromID()
 
 def string_split(s):
 	import string
@@ -236,7 +253,8 @@ def ReceiveBanks(pMessage, kStream):
 	iTarget = kStream.ReadInt()
 	iHits = kStream.ReadInt()
 	iOn = kStream.ReadInt()
-	bcmpdll.setbanks(iShip, iBits, iTarget, iHits, iOn)
+	iSeq = kStream.ReadInt()
+	bcmpdll.setbanks(iShip, iBits, iTarget, iHits, iOn, iSeq)
 	if App.g_kUtopiaModule.IsHost():
 		# a client's ship: pass it on to the other clients
 		pNet = App.g_kUtopiaModule.GetNetwork()
@@ -246,6 +264,7 @@ def ReceiveBanks(pMessage, kStream):
 		kOut.WriteInt(iTarget)
 		kOut.WriteInt(iHits)
 		kOut.WriteInt(iOn)
+		kOut.WriteInt(iSeq)
 		Finish(pOut, kOut)
 		pNet.SendTGMessageToGroup('NoMe', pOut)
 

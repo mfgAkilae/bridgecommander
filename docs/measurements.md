@@ -604,3 +604,89 @@ hits (v1.5.0 release check: 16, 9, 19). Kick test: peak error median 3.6 units, 
 every client saw every ship. Installer update from v1.5.0 tested; the kept `bcmpfix.ini` has
 `PhaserSync=0` and no `PhaserHitAuthority`, and a run with that setting logged every hit authority
 hook as applied. No crashes.
+
+## Issue #23: phaser start delay (v1.7.0)
+
+In v1.6.0 another peer started a reported phaser bank a median 223 ms after the shooter (60 ms
+±20 ms per direction). Test-mode telemetry (`tools/phasertiming.py`: the owner's change, the report's
+send and arrival, the bank's start and hit on each peer, all on one clock) split it up, median ms:
+
+| path | v1.6.0: arrival / start after arrival / total | target list fix | + direct reports (v1.7.0) |
+|---|---|---|---|
+| host → client | 85 / 152 / 236 | 83 / 7 / 90 | 70–72 / 1 / 73 |
+| client → host | 89 / 76 / 198 | 88–89 / 7 / 94–96 | 75 / 1 / 77–78 |
+| client → other client | 174 / 97 / 290 | 170–172 / 7 / 177–178 | 76–77 / 1 / 77 |
+
+The hit state followed the report within 2 ms in all versions, the start did not: Fire checks that
+the target is in a global list (0x0098D32C) that the game rebuilds for each ship right before that
+ship's weapon update. A start from the frame hook checked another ship's list and failed, so the bank
+started only with the weapon system's own retry every 0.33 s. A bank the owner fires now passes that
+check. The second part was the star network: a client's report went to the host and from there to
+the other clients. With `DirectPhaserReports` every bcmpfix machine sends its reports straight to
+every other one, as a UDP packet on the game socket, besides the reliable message through the host
+(the first copy wins); that also skips the game's send queue, about 10–15 ms per hop.
+
+Six players, 180 s, two runs each (`tools/banks.py`, `tools/phasers.py`, `tools/combat.py`):
+
+| | v1.6.0 | target list fix | + direct reports (v1.7.0) |
+|---|---|---|---|
+| start delay on the other peer, median (10th, 90th) | 223 ms (111–118, 336–342) | 134–135 ms (55–56, 190–202) | 57 ms (33–34, 90–91) |
+| stop delay on the other peer, median: host ↔ client, client → client | 117–129, 211–216 ms | 115–131, 212–215 ms | 103–110, 109–110 ms |
+| beam duration on the other peer − shooter's (median) | −61 … −66 ms | +52 … +53 ms | +51 … +52 ms |
+| bank firings of the shooter missing on another peer | 5.2–6.3 % | 3.6–4.8 % | 3.1–3.7 % |
+| bank firings only on another peer | 5 | 13–18 | 12–17 |
+| beams the shooter hit and another peer did not show | 3.6–4.7 % | 3.7–4.0 % | 3.2–4.0 % |
+| client shooters' beams the host did not show (no damage) | 0.0 % | 0.0–0.5 % | 0.0–0.5 % |
+| host's beams a client did not show | 6.2–6.4 % | 4.5–6.0 % | 4.9–5.6 % |
+| beams another peer showed and the shooter did not | 1–11 | 3–5 | 2–5 |
+| host's phaser hits (0.5 s bins) also on a client | 99–100 % | 100 % | 100 % |
+
+`banks.py` reads the bank states the test pilot polls every 50 ms, so its delays differ from the
+telemetry by a few tens of ms. Stop reports arrive as fast as start reports (median 74 ms in both
+directions with direct reports), and the bank stops in the next frame; yet the polled stop comes
+30–50 ms later than the polled start in every version (v1.6.0 too), so a beam now lasts about 50 ms
+longer on the other screens than on the shooter's (before about 60 ms shorter).
+
+Direct reports in the sandbox: every client got each other client's address from the host a few
+seconds after that client joined; per run the host and a client each sent 270–330 reports and received 610–760. The sandbox
+runs on loopback addresses, so NAT and firewalls are not tested; when the direct packets do not
+arrive, the reliable report through the host still does.
+
+## v1.7.0 release check
+
+Exact release build, default settings (`PhaserHitAuthority=1`, `DirectPhaserReports=1`). Mean / 95th
+percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.13, 0.0 % | 0.04 / 0.09, 0.0 % | – | 8 of 8 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.20, 0.0 % | 0.07 / 0.14, 0.1 % | – | 9 of 9 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.11, 0.2 % | 0.05 / 0.09, 0.3 % | 0.07 / 0.14, 0.3 % | 68 of 70 |
+| 6 players, 60 ms (second run) | 0.06 / 0.12, 0.0 % | 0.05 / 0.10, 0.0 % | 0.07 / 0.15, 0.0 % | 79 of 79 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.11, 0.0 % | 0.05 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 49 of 49 |
+
+The two torpedo hits of the first six-player run that one client missed had no torpedo copy on that
+client (`no_torpedo 2`); this also happened in the v1.5.0 release check and in a v1.6.0 development
+run.
+
+Phasers against the v1.6.0 release check (the same three six-player runs each):
+
+| | v1.6.0 | v1.7.0 |
+|---|---|---|
+| start delay on the other peer, median (10th, 90th) | 223–224 ms (111–119, 336–353) | 57–58 ms (33–36, 91–94) |
+| stop delay on the other peer, median: host ↔ client, client → client | 117–129, 211–216 ms | 107–108, 109 ms |
+| beam duration on the other peer − shooter's (median) | −61 … −79 ms | +51 … +53 ms |
+| bank firings of the shooter missing on another peer | 5.2–6.3 % | 3.5–3.9 % |
+| bank firings only on another peer | 0–5 | 3–8 |
+| beams the shooter hit and another peer did not show | 3.3–4.7 % | 3.6–4.4 % |
+| client shooters' beams the host did not show (no damage) | 0.0 % | 0.0–0.5 % |
+| host's beams a client did not show | 5.5–6.4 % | 5.4–7.2 % |
+| beams another peer showed and the shooter did not | 0–11 | 0–6 |
+| host's phaser hits (0.5 s bins) also on a client | 99–100 % | 100 % |
+| hull divergences > 5 % of the maximum (`combat.py`) | 11–36 | 18–43 |
+
+With `DirectPhaserReports=0` (120 s, six players): start delay median 137 ms (10th 57, 90th 203),
+the reports came only through the host, no direct packets. Torpedo hits: client − host −72, −68,
+−68 ms (median); shield/hull differed on 10, 3 and 13 matched hits. Kick test: peak error median 3.4
+units, max 5.4. Join test: every client saw every ship. Installer update from v1.6.0 tested. No
+crashes.

@@ -32,7 +32,8 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 - **Version:** The mod is written for `stbc.exe` version 1.1. It checks the original bytes before each change. If a location does not match, for example in another program version, the mod skips that change and writes `NOT applied` to the log. The game then runs unchanged.
 - **Mixed sessions:** Players without the mod can join. They keep the original behaviour, including the known errors.
 - **Host without the mod:** Torpedo and phaser synchronisation only turn on when the host runs the mod too. The mod detects this automatically.
-- **Older bcmpfix versions:** Players with v1.5.0 or older keep their own phaser decisions; all players should update.
+- **Older bcmpfix versions:** The phaser reports of v1.7.0 have a new format. Players with v1.6.0 or older keep their own phaser decisions, and their phasers are not synchronised with v1.7.0 players; all players should update.
+- **Direct phaser reports:** Players who run bcmpfix v1.7.0 send their phaser reports to each other directly (UDP on the game's port, 22101), not only through the host. For this the host tells each of them the other players' IP addresses and ports. If a router or firewall drops these packets, the reports still arrive through the host, only later. `DirectPhaserReports=0` in `bcmpfix.ini` turns this off.
 - **Other mods:** Mods that ship their own `dinput.dll` are not compatible with bcmpfix.
 - **Windows 10/11:** A graphics wrapper such as dgVoodoo2 (`DDraw.dll` + `D3DImm.dll`) is still recommended. It is independent of bcmpfix.
 
@@ -77,7 +78,12 @@ Since v1.6.0 the shooter's computer decides (`PhaserHitAuthority=1`):
 - The other computers fire exactly these banks, without their own firing-arc check, and keep them firing until the shooter stops.
 - A beam hits, and does damage on the host, when it does on the shooter's screen.
 
-In tests with six players, a client's phaser beam did damage on the host in 99–100 % of the beams (before 88–93 %). A beam the shooter hit was missing on another screen in 3–5 % instead of 13–16 %, and beams that only the other screens showed dropped from 44–70 to 1–11 per run. The beams still start later on the other screens than on the shooter's: about 0.22 s with 60 ms network latency per direction (before 0.27 s).
+In tests with six players, a client's phaser beam did damage on the host in 99–100 % of the beams (before 88–93 %). A beam the shooter hit was missing on another screen in 3–5 % instead of 13–16 %, and beams that only the other screens showed dropped from 44–70 to 1–11 per run.
+
+Since v1.7.0 the beams also start almost together with the shooter's: about 0.06–0.08 s later on the other screens with 60 ms network latency per direction (v1.6.0: 0.22 s, the original: 0.27 s). Two changes did this:
+
+- The other computers start a reported bank at once. Before, the original's target check made them wait for the weapon system's next attempt, which comes every 0.33 s.
+- Each player sends the reports directly to every other bcmpfix player (`DirectPhaserReports=1`). Before, a client's report reached the other clients only through the host, one latency later.
 
 ### 4. Network and timing
 

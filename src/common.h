@@ -34,6 +34,7 @@ typedef struct Config {
     int torpedoLead;        /* advance remotely spawned torpedoes by the fire message's latency */
     int predictHits;        /* clients show their own torpedo/ship collisions at once (host confirms) */
     int phaserSync;         /* remote phaser banks fire only while their owner fires them */
+    int directReports;      /* phaser reports also go straight to every modded peer (direct.c) */
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
@@ -121,10 +122,21 @@ void scripterr_install(void);
 void join_install(void);
 void phaser_install(void);
 void phaser_frame(int pythonReady);
-void phaser_set_remote(DWORD ship, DWORD bits, DWORD target, DWORD hits, DWORD on);
-int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on);
+long tlog_ms(void);
+int net_sendto(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen);
+int direct_enabled(void);
+void direct_init(void);
+void direct_set_role(int isHost, int hostDirect);
+void direct_note_game_send(SOCKET s, const struct sockaddr *to);
+int direct_filter(SOCKET s, const char *buf, int len, const struct sockaddr *from);
+void direct_send_banks(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWORD hits, DWORD on);
+void direct_frame(void);
+void direct_stats(unsigned long *tx, unsigned long *rx, unsigned long *peers);
+void phaser_set_remote_seq(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWORD hits, DWORD on, int path);
+void tlog_printf(const char *fmt, ...);
+int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on, DWORD *seq);
 void phaser_stats2(unsigned long *arc, unsigned long *wait, unsigned long *driven, unsigned long *held,
-                   unsigned long *stopHits);
+                   unsigned long *stopHits, unsigned long *list);
 void phaser_stats(unsigned long *gated, unsigned long *charged, unsigned long *sent, unsigned long *started,
                   unsigned long *stopped);
 unsigned long scripterr_count(void);

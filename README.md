@@ -111,7 +111,7 @@ What bcmpfix does about it:
 | 15 | LOD distances ×3 (v1.3.0) |
 | 16 | remote ships follow the velocity measured from their received positions, along its estimated turn, and are moved exactly by it; their nose follows the reported one (v1.4.0) |
 | 17 | clients advance such copies by the message latency and show their own copy's hit at once; the host's report confirms it (v1.5.0) |
-| 18 | the owner reports its firing banks and which beams are on the target; the other computers fire exactly those banks and show a hit when the owner's beam hits (`PhaserHitAuthority`, v1.6.0) |
+| 18 | the owner reports its firing banks and which beams are on the target; the other computers fire exactly those banks and show a hit when the owner's beam hits (`PhaserHitAuthority`, v1.6.0); they start a reported bank at once, and the reports also go straight from player to player instead of only through the host (`DirectPhaserReports`, v1.7.0) |
 
 ## Verification
 
@@ -169,8 +169,13 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   host does not have, and shield or hull differ in about 1–2 %.
 - Since v1.6.0 the shooter decides phaser hits (#22): a client's phaser beam does damage on the host
   in 99–100 % of the beams (before 88–93 %), a beam the shooter hits is missing on another screen in
-  3–5 % instead of 13–16 %, and beams only other screens show dropped from 44–70 to 1–11 per run. The
-  beams still start about 0.22 s later on the other screens (60 ms latency; before 0.27 s).
+  3–5 % instead of 13–16 %, and beams only other screens show dropped from 44–70 to 1–11 per run.
+- Since v1.7.0 phaser beams start on the other screens about one network latency after the shooter's
+  (#23; 60 ms latency: 57 ms median, v1.6.0 223 ms). The players' bcmpfix copies exchange the phaser
+  reports directly by UDP on the game port; the host tells each player the others' IP addresses.
+  Tested only on loopback in the sandbox: behind NAT routers the direct packets may not arrive, then
+  the reports come through the host as before. A beam lasts about 50 ms longer on the other screens
+  than on the shooter's.
 - Torpedo flight paths still differ a little between players: each computer spawns another player's
   torpedo from that player's ship as it sees it. Since v1.3.0 the flag bits (#8) and the receivers'
   guidance values (#9) match the shooter's. The hit outcome is the host's.

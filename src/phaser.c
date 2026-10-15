@@ -2,19 +2,23 @@
  *
  * The network carries only the weapon system's start/stop firing commands (opcodes 7/8/9).
  * Every machine then decides per bank and frame whether it fires (PhaserBank::Fire
- * 0x00570FE0: CanFire 0x00571E60 = charge, then range and arc 0x005714A0 against its own,
- * latency-shifted view of both ships). Near the edge of an arc, or after the charges have
+ * 0x00570FE0: CanFire 0x00571E60 = charge, then the target list 0x005859D0 and the arc
+ * 0x005714A0 against its own, latency-shifted view of both ships). Near the edge of an arc, or after the charges have
  * drifted apart, the decisions differ: in six-player tests 22 % of a shooter's bank
  * firings did not happen on a given other machine, and other machines fired banks the
  * shooter did not fire. The host applies the damage, so the shooter's hit did no damage.
  *
  * Here the owner of a ship reports which of its phaser banks fire, which of their beams'
  * rays are on an object (+0xFC) and which of these hit (beam state 3), sent by the script as
- * soon as that changes. Every other machine lets a bank of that ship fire only while its owner fires it;
- * while it does, a low local charge does not stop it.
+ * soon as that changes (and straight to every modded machine, direct.c). Every other
+ * machine lets a bank of that ship fire only while its owner fires it; while it does, a
+ * low local charge does not stop it.
  *
  * Mode 3 (PhaserHitAuthority=1, default) also makes the beam follow the owner's: the bank
- * fires without the local arc test and the start wait, only the owner's stop ends it, the
+ * fires without the local arc test, the target list check (the list is rebuilt for each
+ * ship inside its weapon update, so a start from here saw another ship's list and the bank
+ * started only with the weapon system's retry every 0.33 s: 76-155 ms after the report;
+ * issue #23) and the start wait, only the owner's stop ends it, the
  * beam reaches its hit state when the owner's does (not by the local 0.25 s growth timer),
  * a bank the weapon system does not feed is driven with the frame time (the host
  * applies its damage with it), and the hit that StopFiring applies to the ray's object
@@ -59,6 +63,8 @@ static struct {
     DWORD hits;            /* banks whose beam hits (state 3, ray on an object) on the owner's machine */
     DWORD on;              /* banks whose beam's ray is on an object (states 2 and 3) there */
     DWORD stopOn;          /* banks whose beam was on an object when the owner stopped it */
+    DWORD seq;             /* sequence number of the last report applied (direct or relayed) */
+    int hasSeq;
     double retry[32];      /* next start attempt per bank (a failed Fire is retried every 100 ms) */
     unsigned long fed[32]; /* frame of the last Fire call (the weapon system feeds firing banks) */
 } g_remote[MAXREMOTE];
@@ -74,12 +80,17 @@ static double g_lastFrameT;
 static float g_dt = 0.016f;
 static unsigned long g_forcedArc, g_skippedWait, g_driven, g_skippedStopHit;
 
-static DWORD g_ownShip, g_ownBits, g_ownTarget, g_ownHits, g_ownOn, g_sentShip, g_sentBits, g_sentHits, g_sentOn;
+static DWORD g_ownShip, g_ownBits, g_ownTarget, g_ownHits, g_ownOn, g_ownSeq, g_sentShip, g_sentBits, g_sentHits,
+    g_sentOn;
+static unsigned long g_staleReports;
 static int g_pending;
 static unsigned long g_gated, g_forcedCharge, g_sent;
 
 static BYTE *local_ship(void);
 static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2);
+/* test mode: why a start of an owner-fired bank failed (results of Fire's checks) */
+static int g_diagTgt, g_diagRange;
+static double g_diagLast[MAXREMOTE][32];
 typedef BYTE *(__cdecl *PFN_FindObject)(int kind, DWORD id);
 typedef char(__fastcall *PFN_IsA)(void *obj, void *edx, int type);
 static unsigned long g_started, g_stopped;
@@ -190,13 +201,22 @@ static int remote_slot(DWORD ship, int create)
 }
 
 /* script: the owner of `ship` fires the banks in `bits` at `target` */
-void phaser_set_remote(DWORD ship, DWORD bits, DWORD target, DWORD hits, DWORD on)
+/* a report from the owner, through the host (path 0) or straight from its machine (1): the
+ * first copy of each report wins */
+void phaser_set_remote_seq(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWORD hits, DWORD on, int path)
 {
     BYTE *own = local_ship();
     int i;
     if (own && *(DWORD *)(own + 4) == ship)
         return;
     i = remote_slot(ship, 1);
+    if (g_remote[i].hasSeq && (long)(seq - g_remote[i].seq) <= 0 && (long)(g_remote[i].seq - seq) < 100000) {
+        g_staleReports++;
+        return;
+    }
+    g_remote[i].seq = seq;
+    g_remote[i].hasSeq = 1;
+    tlog_printf("PR %ld %lu %lu %lu %lu %d", tlog_ms(), ship, bits, hits, on, path);
     /* banks the owner stops now: was their beam on an object (the stop then applies a hit)? */
     g_remote[i].stopOn = (g_remote[i].on & g_remote[i].bits & ~bits) | (g_remote[i].stopOn & ~g_remote[i].bits & ~bits) |
                          (on & bits);
@@ -207,7 +227,7 @@ void phaser_set_remote(DWORD ship, DWORD bits, DWORD target, DWORD hits, DWORD o
 }
 
 /* script: the next state of our own ship to send; 0 if nothing changed */
-int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on)
+int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on, DWORD *seq)
 {
     if (!g_pending)
         return 0;
@@ -217,6 +237,7 @@ int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on)
     *target = g_ownTarget;
     *hits = g_ownHits;
     *on = g_ownOn;
+    *seq = g_ownSeq;
     g_sentShip = g_ownShip;
     g_sentBits = g_ownBits;
     g_sentHits = g_ownHits;
@@ -233,6 +254,8 @@ void phaser_frame(int pythonReady)
     int n, i;
     if (!g_cfg.phaserSync)
         return;
+    if (direct_enabled())
+        direct_frame();
     enforce_remote();
     if (!ship)
         return;
@@ -260,6 +283,10 @@ void phaser_frame(int pythonReady)
     g_ownTarget = target;
     g_ownHits = hits;
     g_ownOn = on;
+    g_ownSeq++;
+    tlog_printf("PO %ld %lu %lu %lu %lu", tlog_ms(), id, bits, hits, on);
+    if (direct_enabled())
+        direct_send_banks(id, g_ownSeq, bits, target, hits, on);
     if (id == g_sentShip && bits == g_sentBits && hits == g_sentHits && on == g_sentOn)
         return;
     g_pending = 1;
@@ -299,7 +326,23 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2)
             g_curBank = b;
             g_curSlot = slot;
             g_curIdx = idx;
-            r = ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);
+            {
+                char was = b[BANK_FIRING];
+                int st = *(int *)(b + BANK_BEAM_STATE);
+                g_diagTgt = g_diagRange = -1;
+                r = ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);
+                if (!was && b[BANK_FIRING])
+                    tlog_printf("PS %ld %lu %d", tlog_ms(), *(DWORD *)(ship + 4), idx);
+                if (!was && !b[BANK_FIRING] && g_cfg.testMode && now_sec() - g_diagLast[slot][idx] > 0.03) {
+                    char cf = ((char(__fastcall *)(void *, void *))(*(void ***)bank)[0x84 / 4])(bank, 0);
+                    g_diagLast[slot][idx] = now_sec();
+                    tlog_printf("PF %ld %lu %d canfire=%d tgt=%d list=%d target=%lu charge=%.2f", tlog_ms(),
+                                *(DWORD *)(ship + 4), idx, cf, g_diagTgt, g_diagRange, *(DWORD *)(b + BANK_TARGET),
+                                *(float *)(b + BANK_CHARGE));
+                }
+                if (st != 3 && *(int *)(b + BANK_BEAM_STATE) == 3)
+                    tlog_printf("PH %ld %lu %d", tlog_ms(), *(DWORD *)(ship + 4), idx);
+            }
             g_curBank = NULL;
             return r;
         }
@@ -317,6 +360,10 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2)
 #define ADDR_STOP 0x00571200
 #define ADDR_CALL_GROWN 0x005721D8 /* beam state 2: growth done? (0x004E7580) -> state 3, hit */
 #define ADDR_GROWN 0x004E7580
+#define ADDR_CALL_TGT 0x00571043 /* Fire: target position (0x005852A0, thiscall on the phaser system) */
+#define ADDR_TGT 0x005852A0
+#define ADDR_CALL_LIST 0x0057106E /* Fire: is the target in the global target list 0x0098D32C? */
+#define ADDR_LIST 0x005859D0
 #define ADDR_CALL_STOPHIT 0x00571374 /* StopFiring: apply the hit on the beam's object (0x005722B0) */
 #define ADDR_HIT 0x005722B0
 typedef char(__fastcall *PFN_Arc)(void *bank, void *edx, void *a1, void *a2, float *a3);
@@ -324,7 +371,35 @@ typedef char(__fastcall *PFN_Wait)(void *beam, void *edx, float t, float p);
 typedef void(__fastcall *PFN_Grow)(void *beam, void *edx, float t, float dur);
 typedef char(__fastcall *PFN_Grown)(void *beam, void *edx);
 typedef void(__fastcall *PFN_Hit)(void *bank, void *edx);
-static void *o_StopHit;
+static void *o_StopHit, *o_Tgt, *o_List;
+static unsigned long g_forcedList;
+typedef char(__fastcall *PFN_Tgt)(void *sys, void *edx, void *a1, void *a2, void *a3);
+typedef char(__cdecl *PFN_List)(void *target);
+
+static char __fastcall hk_Tgt(void *sys, void *edx, void *a1, void *a2, void *a3)
+{
+    char r = ((PFN_Tgt)o_Tgt)(sys, edx, a1, a2, a3);
+    if (g_curBank)
+        g_diagTgt = r;
+    return r;
+}
+
+/* Fire only targets in a global list that 0x005856D0 rebuilds for each ship right before its
+ * weapon systems' frame update (the targets of its weapon systems that its sensors see). Our
+ * start of a bank runs outside that update and sees another ship's list, so the bank started
+ * only with the weapon system's own retry (every 0.33 s). The owner fired at this target. */
+static char __cdecl hk_List(void *target)
+{
+    char r = ((PFN_List)o_List)(target);
+    if (g_curBank) {
+        g_diagRange = r;
+        if (!r && target) {
+            g_forcedList++;
+            return 1;
+        }
+    }
+    return r;
+}
 static void *o_Arc, *o_Wait, *o_Grow, *o_Grown;
 static unsigned long g_heldGrowth;
 
@@ -399,8 +474,9 @@ static void __fastcall hk_Stop(void *bank, void *edx)
 }
 
 void phaser_stats2(unsigned long *arc, unsigned long *wait, unsigned long *driven, unsigned long *held,
-                   unsigned long *stopHits)
+                   unsigned long *stopHits, unsigned long *list)
 {
+    *list = g_forcedList;
     *arc = g_forcedArc;
     *wait = g_skippedWait;
     *driven = g_driven;
@@ -435,6 +511,9 @@ void phaser_install(void)
         redirect_call(ADDR_CALL_WAIT, (void *)hk_Wait, &o_Wait, ADDR_WAIT, "phaser hit authority: no start wait");
         redirect_call(ADDR_CALL_GROW, (void *)hk_Grow, &o_Grow, ADDR_GROW, "phaser hit authority: growth minus latency");
         redirect_call(ADDR_CALL_GROWN, (void *)hk_Grown, &o_Grown, ADDR_GROWN, "phaser hit authority: hit when the owner hits");
+        redirect_call(ADDR_CALL_LIST, (void *)hk_List, &o_List, ADDR_LIST, "phaser hit authority: owner's target");
+        if (g_cfg.testMode)
+            redirect_call(ADDR_CALL_TGT, (void *)hk_Tgt, &o_Tgt, ADDR_TGT, "phaser diagnostics: target");
         redirect_call(ADDR_CALL_STOPHIT, (void *)hk_StopHit, &o_StopHit, ADDR_HIT,
                       "phaser hit authority: hit at the stop only if the owner's beam was on an object");
         if (*(DWORD *)stopSlot == ADDR_STOP) {

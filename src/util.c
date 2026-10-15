@@ -64,6 +64,7 @@ void config_load(void)
     /* PhaserHitAuthority is mode 3 of the phaser sync; the experimental modes 1 and 2 of v1.5.0
      * (PhaserSync) only apply without it. An INI kept from v1.5.0 has PhaserSync=0. */
     g_cfg.phaserSync = ini_int(ini, "Fixes", "PhaserHitAuthority", 1) ? 3 : ini_int(ini, "Fixes", "PhaserSync", 0);
+    g_cfg.directReports = ini_int(ini, "Fixes", "DirectPhaserReports", 1);
     g_cfg.mpScript = ini_int(ini, "Fixes", "ScriptLayer", 1);
     if (!g_cfg.mpScript)
         g_cfg.torpedoAuthority = g_cfg.latencyComp = 0;

@@ -122,6 +122,7 @@ static void note_peer(const char *dir, SOCKET s, const struct sockaddr *a, int l
 static int WINAPI hk_sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen)
 {
     ensure_bound(s);
+    direct_note_game_send(s, to);
     if (g_cfg.verbose)
         note_peer("send", s, to, len, 0);
     g_stats.outPkts++;
@@ -159,11 +160,32 @@ static int WINAPI hk_sendto(SOCKET s, const char *buf, int len, int flags, const
     return o_sendto(s, buf, len, flags, to, tolen);
 }
 
+/* direct.c: our own packets go through the emulator and the statistics like the game's */
+int net_sendto(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen)
+{
+    return hk_sendto(s, buf, len, 0, to, tolen);
+}
+
 static int WINAPI hk_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen)
 {
     int r;
     pump();
-    r = o_recvfrom(s, buf, len, flags, from, fromlen);
+    for (;;) {
+        u_long avail = 0;
+        int fl = fromlen ? *fromlen : 0;
+        r = o_recvfrom(s, buf, len, flags, from, fromlen);
+        if (r <= 0 || !direct_filter(s, buf, r, from))
+            break;
+        /* our packet: hand the game the next one, or "nothing yet" */
+        g_stats.inPkts++;
+        g_stats.inBytes += r;
+        if (fromlen)
+            *fromlen = fl;
+        if (ioctlsocket(s, FIONREAD, &avail) != 0 || avail == 0) {
+            WSASetLastError(WSAEWOULDBLOCK);
+            return SOCKET_ERROR;
+        }
+    }
     if (r > 0) {
         g_stats.inPkts++;
         g_stats.inBytes += r;
@@ -221,7 +243,8 @@ void net_install(void)
     srand(GetTickCount() ^ GetCurrentProcessId());
     if (g_cfg.testMode && g_cfg.bindAddress[0])
         g_bindAddr = inet_addr(g_cfg.bindAddress);
-    if (!(g_cfg.testMode || g_cfg.statsIntervalSec > 0))
+    direct_init();
+    if (!(g_cfg.testMode || g_cfg.statsIntervalSec > 0 || direct_enabled()))
         return;
     iat_hook(exe, "WSOCK32.dll", NULL, ORD_BIND, (void *)hk_bind, (void **)&o_bind);
     iat_hook(exe, "WSOCK32.dll", NULL, ORD_SENDTO, (void *)hk_sendto, (void **)&o_sendto);

@@ -2,6 +2,7 @@
  * interpreter statically linked into stbc.exe. Gives scripts a reliable output
  * channel (the game's Python cannot write files / stdout is swallowed). */
 #include "common.h"
+#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,31 @@ static FILE *open_env(const char *var, const char *def)
 }
 
 /* bcmpdll.log(str): append one line to the telemetry log */
+/* test mode: a line in the test pilot's telemetry log, with its clock (bcmpdll.ms) */
+long tlog_ms(void)
+{
+    LARGE_INTEGER c, f;
+    QueryPerformanceCounter(&c);
+    QueryPerformanceFrequency(&f);
+    return (long)((c.QuadPart / (f.QuadPart / 1000)) & 0x7fffffff);
+}
+
+void tlog_printf(const char *fmt, ...)
+{
+    va_list ap;
+    if (!g_cfg.testMode)
+        return;
+    if (!g_tlog)
+        g_tlog = open_env("BCMP_TLOG", "bcmp_telemetry.txt");
+    if (!g_tlog)
+        return;
+    va_start(ap, fmt);
+    vfprintf(g_tlog, fmt, ap);
+    va_end(ap);
+    fputc('\n', g_tlog);
+    fflush(g_tlog);
+}
+
 static PyObject *__cdecl m_log(PyObject *self, PyObject *args)
 {
     const char *s = NULL;
@@ -174,36 +200,38 @@ static PyObject *__cdecl m_setfirelead(PyObject *self, PyObject *args)
  * since the last call, else "" */
 static PyObject *__cdecl m_takebanks(PyObject *self, PyObject *args)
 {
-    DWORD ship, bits, target, hits, on;
-    char buf[96] = "";
+    DWORD ship, bits, target, hits, on, seq;
+    char buf[112] = "";
     (void)self;
     (void)args;
-    if (phaser_take(&ship, &bits, &target, &hits, &on))
-        _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", ship, bits, target, hits, on);
+    if (phaser_take(&ship, &bits, &target, &hits, &on, &seq)) {
+        _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu", ship, bits, target, hits, on, seq);
+        tlog_printf("PT %ld %lu %lu %lu %lu", tlog_ms(), ship, bits, hits, on);
+    }
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
 /* bcmpdll.setbanks(ship, bits, target): the owner of that ship fires these phaser banks */
 static PyObject *__cdecl m_setbanks(PyObject *self, PyObject *args)
 {
-    int ship = 0, bits = 0, target = 0, hits = 0, on = 0;
+    int ship = 0, bits = 0, target = 0, hits = 0, on = 0, seq = 0;
     (void)self;
-    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "iii|ii", &ship, &bits, &target, &hits, &on))
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "iiiiii", &ship, &bits, &target, &hits, &on, &seq))
         return NULL;
-    phaser_set_remote((DWORD)ship, (DWORD)bits, (DWORD)target, (DWORD)hits, (DWORD)on);
+    phaser_set_remote_seq((DWORD)ship, (DWORD)seq, (DWORD)bits, (DWORD)target, (DWORD)hits, (DWORD)on, 0);
     return py_none();
 }
 
 /* bcmpdll.phaserstats(): "gated charged sent started stopped" */
 static PyObject *__cdecl m_phaserstats(PyObject *self, PyObject *args)
 {
-    unsigned long g, c, s, st, sp, ar, wt, dr, hd, sh;
+    unsigned long g, c, s, st, sp, ar, wt, dr, hd, sh, ls;
     char buf[160];
     (void)self;
     (void)args;
     phaser_stats(&g, &c, &s, &st, &sp);
-    phaser_stats2(&ar, &wt, &dr, &hd, &sh);
-    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", g, c, s, st, sp, ar, wt, dr, hd, sh);
+    phaser_stats2(&ar, &wt, &dr, &hd, &sh, &ls);
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu %lu %lu %lu %lu %lu", g, c, s, st, sp, ar, wt, dr, hd, sh, ls);
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
@@ -246,6 +274,29 @@ static PyObject *__cdecl m_forcereplay(PyObject *self, PyObject *args)
     if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "ss", &t, &s))
         return NULL;
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(torpedo_force_replay(swig_ptr(t), swig_ptr(s)));
+}
+
+/* bcmpdll.netrole(isHost, hostDirect): for the direct phaser reports */
+static PyObject *__cdecl m_netrole(PyObject *self, PyObject *args)
+{
+    int host = 0, mod = 0;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "ii", &host, &mod))
+        return NULL;
+    direct_set_role(host, mod);
+    return py_none();
+}
+
+/* bcmpdll.directstats() -> "sent received peers" */
+static PyObject *__cdecl m_directstats(PyObject *self, PyObject *args)
+{
+    unsigned long tx, rx, peers;
+    char buf[64];
+    (void)self;
+    (void)args;
+    direct_stats(&tx, &rx, &peers);
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu", tx, rx, peers);
+    return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
 /* bcmpdll.authority(on): enable client-side torpedo hit suppression */
@@ -304,6 +355,8 @@ static PyObject *__cdecl m_config(PyObject *self, PyObject *args)
         v = g_cfg.predictHits;
     else if (!lstrcmpiA(k, "TorpedoLatencyCompensation"))
         v = g_cfg.torpedoLead;
+    else if (!lstrcmpiA(k, "DirectPhaserReports"))
+        v = direct_enabled();
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(v);
 }
 
@@ -313,6 +366,8 @@ static PyMethodDef g_methods[] = {
     {"forcereplay", m_forcereplay, 1, NULL},
     {"retire", m_retire, 1, NULL},
     {"authority", m_authority, 1, NULL},
+    {"netrole", m_netrole, 1, NULL},
+    {"directstats", m_directstats, 1, NULL},
     {"setlead", m_setlead, 1, NULL},
     {"takebanks", m_takebanks, 1, NULL},
     {"setbanks", m_setbanks, 1, NULL},
