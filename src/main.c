@@ -110,6 +110,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID res)
         net_install();
         netfix_install();
         torpedo_install();
+        torpedo_trace_install();
         lead_install();
         relay_install();
         scripterr_install();

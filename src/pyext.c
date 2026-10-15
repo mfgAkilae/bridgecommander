@@ -218,7 +218,7 @@ static PyObject *__cdecl m_torpstats(PyObject *self, PyObject *args)
     (void)self;
     (void)args;
     torpedo_stats(&s, &a);
-    _snprintf(buf, sizeof(buf), "%lu %lu", s, a);
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu", s, a, torpedo_pushed_out());
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 

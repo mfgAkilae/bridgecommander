@@ -19,7 +19,7 @@ typedef void(__fastcall *PFN_Detect)(void *torp, void *edx, void *other);
 typedef char(__fastcall *PFN_IsTypeOf)(void *self, void *edx, int type);
 
 static BYTE *g_tramp;
-static unsigned long g_suppressed, g_allowed;
+static unsigned long g_suppressed, g_allowed, g_pushedOut;
 /* Set by the script layer once the host has answered a ping, i.e. runs bcmpfix
  * too. Without a modded host nobody would report hits, so keep stock behaviour. */
 static int g_active;
@@ -111,6 +111,36 @@ static int is_authorized(DWORD torpId)
 
 #define ADDR_HIT_LOOP_COUNT 0x005791BA /* cmp eax,2 in the hit loop (imm8) */
 
+/* Shield ellipsoid of a ship (hit test 0x005AE730): semi-axes at ship+0x24C/0x250/0x254
+ * (local, divided out before the unit-sphere test), centre offset at +0x258. When the
+ * replay start lies inside the ellipsoid, the stock test checks the hull first and a
+ * host-reported shield hit shows as a hull hit (the host's hit point is on the host's
+ * ellipsoid, the client's ship is oriented a bit differently). Move the start out to
+ * 1.3 times the largest semi-axis from the ship's position, on the same ray. */
+#define SHIP_SHIELD_AXES 0x24C
+typedef float *(__fastcall *PFN_ShipPos)(void *obj, void *edx);
+double __cdecl sqrt(double);
+
+static void push_outside_shield(void *ship, float *st)
+{
+    float *ax = (float *)((BYTE *)ship + SHIP_SHIELD_AXES), r, d[3], n;
+    float *c = ((PFN_ShipPos)(*(void ***)ship)[0x94 / 4])(ship, 0);
+    int i;
+    r = ax[0] > ax[1] ? ax[0] : ax[1];
+    if (ax[2] > r)
+        r = ax[2];
+    if (!(r > 0.0f && r < 1000.0f))
+        return;
+    for (i = 0; i < 3; i++)
+        d[i] = st[i] - c[i];
+    n = (float)sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+    if (n < 1e-3f || n >= 1.3f * r)
+        return;
+    for (i = 0; i < 3; i++)
+        st[i] = c[i] + d[i] / n * 1.3f * r;
+    g_pushedOut++;
+}
+
 static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
 {
     (void)edx;
@@ -129,8 +159,12 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
             }
             g_allowed++;
             /* replay: the hit segment starts at the replay start point outside the target */
-            if (g_auth[slot].hasStart)
-                memcpy((BYTE *)torp + TORP_PREV_POS, g_auth[slot].start, 12);
+            if (g_auth[slot].hasStart) {
+                float st[3];
+                memcpy(st, g_auth[slot].start, 12);
+                push_outside_shield(other, st);
+                memcpy((BYTE *)torp + TORP_PREV_POS, st, 12);
+            }
             /* make the local shield/hull decision follow the host's */
             if (mode > 0) {
                 BYTE *sh = *(BYTE **)((BYTE *)other + SHIP_SHIELDS);
@@ -203,6 +237,11 @@ void torpedo_retire(void *torp)
         ((PFN_SetHidden)(*(void ***)node)[0x50 / 4])(node, 0, 1);
 }
 
+unsigned long torpedo_pushed_out(void)
+{
+    return g_pushedOut;
+}
+
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed)
 {
     *suppressed = g_suppressed;
@@ -230,4 +269,47 @@ void torpedo_install(void)
     memcpy(jmp + 1, &rel, 4);
     mem_write((void *)ADDR_DETECT_COLLISION, jmp, 5);
     logf("PATCH torpedo authority (client torpedo/ship hits only on host confirmation): applied");
+}
+
+/* Diagnostics (TraceStateSec): torpedoes spawned from a remote fire message. The
+ * receiver (0x0069F930) calls the spawn 0x0057D110 (thiscall, 7 arguments: skew,
+ * sound, no target, tube index, target id, target offset, shooter's direction of
+ * flight). Logs the flags and the angle between the new torpedo's velocity and the
+ * shooter's direction of flight: a skewed launch leaves along the tube's right vector. */
+#define ADDR_CALL_RECV_SPAWN 0x0069FB5C
+#define ADDR_RECV_SPAWN 0x0057D110
+#define ADDR_GET_VELOCITY 0x005A05A0
+
+typedef BYTE *(__fastcall *PFN_RecvSpawn)(void *self, void *edx, char skew, char sound, char noTarget, int tube,
+                                         int target, int *offset, float *dir);
+typedef float *(__fastcall *PFN_GetVel)(void *obj, void *edx);
+static void *o_RecvSpawn;
+double __cdecl sqrt(double);
+double __cdecl acos(double);
+
+static BYTE *__fastcall hk_RecvSpawn(void *self, void *edx, char skew, char sound, char noTarget, int tube, int target,
+                                     int *offset, float *dir)
+{
+    BYTE *t = ((PFN_RecvSpawn)o_RecvSpawn)(self, edx, skew, sound, noTarget, tube, target, offset, dir);
+    (void)edx;
+    if (t && dir && trace_active()) {
+        float *v = ((PFN_GetVel)ADDR_GET_VELOCITY)(t, 0);
+        float nv = (float)sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+        float nd = (float)sqrt(dir[0] * dir[0] + dir[1] * dir[1] + dir[2] * dir[2]);
+        float c = (nv > 1e-4f && nd > 1e-4f) ? (v[0] * dir[0] + v[1] * dir[1] + v[2] * dir[2]) / (nv * nd) : 1.0f;
+        if (c > 1.0f)
+            c = 1.0f;
+        if (c < -1.0f)
+            c = -1.0f;
+        tracef("T recv torp=%lu skew=%d sound=%d notgt=%d tube=%d ang=%.1f", *(DWORD *)(t + 4), skew, sound, noTarget,
+               tube, nd > 1e-4f ? (float)(acos(c) * 57.29578) : -1.0f);
+    }
+    return t;
+}
+
+void torpedo_trace_install(void)
+{
+    if (g_cfg.traceSec > 0)
+        redirect_call(ADDR_CALL_RECV_SPAWN, (void *)hk_RecvSpawn, &o_RecvSpawn, ADDR_RECV_SPAWN,
+                      "trace remote torpedo spawns");
 }

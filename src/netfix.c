@@ -375,6 +375,16 @@ void netfix_install(void)
         _snprintf(repl, sizeof(repl), "b9 %02x %02x %02x %02x", b[0], b[1], b[2], b[3]);
         patch_bytes(0x006B82D4, "b9 00 00 80 3f", repl, "guaranteed message resend interval");
     }
+    if (g_cfg.fixTorpedoFlags) {
+        /* Torpedo fire message (0x0057CB10): the sender puts the launch-sound flag in
+         * bit0 and the skew flag (TorpedoTube +0xA8, launch along the tube's right
+         * vector) in bit1, the receiver spawn (0x0057D110 via 0x0069F930) reads bit0 as
+         * skew and bit1 as sound. Receivers launched every "sound" torpedo sideways and
+         * played no launch sound. Swap the bits on the sender: also unmodded receivers
+         * then get them right. */
+        patch_bytes(0x0057CBA8, "c6 44 24 10 01", "c6 44 24 10 02", "torpedo fire flags: launch sound to bit1");
+        patch_bytes(0x0057CBB7, "80 4c 24 10 02", "80 4c 24 10 01", "torpedo fire flags: skew to bit0");
+    }
     if (g_cfg.sendInterval > 0.0f && g_cfg.sendInterval < 0.0999f) {
         static float interval;
         char expect[16], repl[16];

@@ -26,6 +26,7 @@ PING_INTERVAL_MS = 1000
 LEAD_INTERVAL_MS = 500
 LEAD_EXTRA_MS = 30          # half a state update interval plus about one frame
 HIT_SEARCH_RADIUS = 250.0   # max distance between host hit point and local torpedo copy
+WAIT_MS = 400               # how long a hit report waits for our copy of the torpedo
 
 g_idMission = None
 g_bHostHasMod = 0
@@ -36,7 +37,8 @@ g_iLastHitTorp = 0
 g_iLastHitTime = 0
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0}
+g_lWaiting = []             # client: hit reports without a local copy yet: [deadline ms, target, shooter, rel x, y, z, hull]
+g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0}
 g_iNextStats = 0
 
 
@@ -77,6 +79,7 @@ def DoTick():
 		return
 	if g_idMission != pMission.GetObjID():
 		Register(pMission)
+	RetryWaiting()
 	ExpirePending()
 	t = Ms()
 	if t >= g_iNextPing:
@@ -339,14 +342,42 @@ def ReceiveHit(kStream):
 	if not pTarget:
 		g_dStats['no_target'] = g_dStats['no_target'] + 1
 		return
-	pTorp = FindTorpedo(pTarget, iShooter, fX, fY, fZ)
-	if pTorp is None:
-		g_dStats['no_torpedo'] = g_dStats['no_torpedo'] + 1
-		return
 	# remember the impact point relative to the target: it keeps moving
 	kC = pTarget.GetWorldLocation()
-	g_dPending[pTorp.GetObjID()] = [Ms() + 250, 0, iTarget, fX - kC.GetX(), fY - kC.GetY(), fZ - kC.GetZ(), iHull]
+	lHit = [iTarget, iShooter, fX - kC.GetX(), fY - kC.GetY(), fZ - kC.GetZ(), iHull]
+	if not StartReplay(pTarget, lHit):
+		# The fire message of a client's torpedo comes from that client, the hit report
+		# from the host, so the report can arrive before our copy exists: wait for it.
+		g_lWaiting.append([Ms() + WAIT_MS] + lHit)
+		g_dStats['waiting'] = g_dStats['waiting'] + 1
+
+def StartReplay(pTarget, lHit):
+	# lHit: [target id, shooter id, rel x, rel y, rel z, hull]
+	kC = pTarget.GetWorldLocation()
+	pTorp = FindTorpedo(pTarget, lHit[1], kC.GetX() + lHit[2], kC.GetY() + lHit[3], kC.GetZ() + lHit[4])
+	if pTorp is None:
+		return 0
+	g_dPending[pTorp.GetObjID()] = [Ms() + 250, 0, lHit[0], lHit[2], lHit[3], lHit[4], lHit[5]]
 	ReplayApproach(pTorp, pTarget, g_dPending[pTorp.GetObjID()])
+	return 1
+
+def RetryWaiting():
+	global g_lWaiting
+	if not g_lWaiting:
+		return
+	t = Ms()
+	lKeep = []
+	for lEntry in g_lWaiting:
+		pTarget = App.ShipClass_GetObjectByID(None, lEntry[1])
+		if not pTarget:
+			g_dStats['no_target'] = g_dStats['no_target'] + 1
+		elif StartReplay(pTarget, lEntry[1:]):
+			g_dStats['late_found'] = g_dStats['late_found'] + 1
+		elif t < lEntry[0]:
+			lKeep.append(lEntry)
+		else:
+			g_dStats['no_torpedo'] = g_dStats['no_torpedo'] + 1
+	g_lWaiting = lKeep
 
 def ReplayApproach(pTorp, pTarget, lEntry):
 	# Re-fly our copy into the host's impact point: start just outside it on the

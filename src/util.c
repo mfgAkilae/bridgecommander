@@ -39,6 +39,7 @@ void config_load(void)
     g_cfg.fixDeltaBase = ini_int(ini, "Fixes", "FixDeltaBase", 1);
     g_cfg.fixProxyInit = ini_int(ini, "Fixes", "FixProxyFirstFrame", 1);
     g_cfg.noDeadband = ini_int(ini, "Fixes", "NoCorrectionDeadband", 1);
+    g_cfg.fixTorpedoFlags = ini_int(ini, "Fixes", "FixTorpedoFireFlags", 1);
     g_cfg.correctionGain = ini_int(ini, "Fixes", "CorrectionGainPercent", 500) / 100.0f;
     g_cfg.smoothCorrection = ini_int(ini, "Fixes", "SmoothCorrection", 1);
     g_cfg.orientationCorrection = ini_int(ini, "Fixes", "OrientationCorrection", 1);

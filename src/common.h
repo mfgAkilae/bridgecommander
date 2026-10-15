@@ -12,6 +12,7 @@ typedef struct Config {
     int fixDeltaBase;       /* receiver: delta relative to last absolute, not accumulated */
     int fixProxyInit;       /* NetworkAI first-frame time init */
     int noDeadband;         /* NetworkAI: correct small position errors too */
+    int fixTorpedoFlags;    /* torpedo fire message: sound/skew bits in the order the receiver reads them */
     float correctionGain;   /* NetworkAI position correction gain (1 = original 1/s) */
     int smoothCorrection;   /* never correct a remote ship backwards faster than half its speed */
     int orientationCorrection; /* turn remote ships towards the received orientation (time constant as position) */
@@ -82,6 +83,7 @@ void net_install(void);
 void netfix_install(void);
 int pyext_init(void);
 void torpedo_install(void);
+void torpedo_trace_install(void);
 void torpedo_authorize(DWORD torpId);
 void torpedo_authorize_mode(DWORD torpId, int mode);
 void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z);
@@ -89,6 +91,7 @@ int torpedo_force(void *torp, void *target);
 void torpedo_retire(void *torp);
 void torpedo_set_active(int on);
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed);
+unsigned long torpedo_pushed_out(void);
 void lead_install(void);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
