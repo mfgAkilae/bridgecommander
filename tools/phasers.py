@@ -10,8 +10,12 @@ import os
 import re
 import sys
 
-ROLE_NAMES = {'host': 'Ace', 'client': 'Bravo', 'client2': 'Charlie', 'client3': 'Delta', 'client4': 'Echo',
-              'client5': 'Foxtrot'}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import analyze  # noqa: E402
+
+# ship names of the test pilot (mptest.py): the host's default name, then the clients' -Name
+NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima', 'Mike', 'November', 'Oscar', 'Papa']
+ROLE_NAMES = dict([('host', 'Ace'), ('client', 'Bravo')] + [('client%d' % k, NAMES[k]) for k in range(2, 16)])
 
 
 def beams(path):
@@ -47,6 +51,7 @@ def main():
            'host_beams': 0, 'host_beams_missing': 0, 'others_only_host': 0}
     lens_missing, lens_seen, lens_others = [], [], []
     for run in sys.argv[1:]:
+        w0, w1 = analyze.common_window(run)
         logs = {}
         for f in os.listdir(run):
             m = re.match(r'tlog_(host|client\d*)\.txt$', f)
@@ -58,6 +63,8 @@ def main():
             own = {k: v for k, v in logs[shooter_role].items() if k[0] == name}
             for (src, tgt), bl in own.items():
                 for b in bl:
+                    if not w0 <= b[0] <= w1:
+                        continue
                     for r, lg in logs.items():
                         if r == shooter_role:
                             continue
@@ -82,6 +89,8 @@ def main():
                     if src != name:
                         continue
                     for b in bl:
+                        if not w0 <= b[0] <= w1:
+                            continue
                         if not overlaps(b, own.get((src, tgt), [])):
                             tot['others_only'] += 1
                             tot['others_only_host'] += r == 'host'

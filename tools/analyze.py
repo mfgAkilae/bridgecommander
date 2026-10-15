@@ -40,6 +40,48 @@ def load(path):
     return ships, hits, deaths, fired, states
 
 
+def common_window(run):
+    """(start, end) in ms of the phase in which every instance of a run is in the game: from 5 s
+    after the last instance entered it to 1 s before the first one quits. Players join and leave
+    one after the other; outside this window another instance cannot see what one does."""
+    starts, quits = [], []
+    for f in os.listdir(run):
+        if not re.match(r'tlog_(host|client\d*)\.txt$', f):
+            continue
+        st = None
+        for line in open(os.path.join(run, f), errors='replace'):
+            if line.startswith('X STATE '):
+                p = line.split()
+                if len(p) >= 4 and p[3] == 'ingame' and st is None:
+                    st = int(p[2])
+                elif len(p) >= 4 and p[3] == 'quit':
+                    quits.append(int(p[2]))
+        if st is not None:
+            starts.append(st)
+    return (max(starts) + 5000 if starts else 0, min(quits) - 1000 if quits else 2 ** 62)
+
+
+def trim(logs):
+    """Drop the samples after the first instance quits: players leave one after the other, and
+    while they disconnect the remaining instances log stale or wrong positions of their ships
+    (with ten clients the leaving phase lasts 30 s)."""
+    quits = []
+    for lg in logs.values():
+        for s in lg[4]:
+            p = s.split()
+            if len(p) >= 4 and p[1] == 'STATE' and p[3] == 'quit':
+                quits.append(int(p[2]))
+    if not quits:
+        return None
+    t_end = min(quits) - 1000
+    for lg in logs.values():
+        for name in list(lg[0].keys()):
+            lg[0][name] = [x for x in lg[0][name] if x[0] <= t_end]
+            if not lg[0][name]:
+                del lg[0][name]
+    return t_end
+
+
 def interp(track, t):
     ts = [x[0] for x in track]
     i = bisect.bisect_left(ts, t)
@@ -148,6 +190,7 @@ def analyze(run):
         m = re.match(r'tlog_(host|client\d*)\.txt$', f)
         if m:
             logs[m.group(1)] = load(os.path.join(run, f))
+    trim(logs)
     roles = sorted(logs, key=role_key)
     print('=== %s (%s)' % (os.path.basename(run), ', '.join(roles)))
     # owner = the instance that logs the ship as local most often (names can be

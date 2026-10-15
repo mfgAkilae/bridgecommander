@@ -17,6 +17,8 @@ g_iSystem = 1
 g_sAI = 'attack'
 g_fLogEvery = 0.1
 g_fQuitAfter = 0.0
+g_bDedicated = 0
+g_iMaxPlayers = 0
 
 def Env(sKey, sDefault):
 	import bcmpdll
@@ -27,6 +29,7 @@ def Env(sKey, sDefault):
 
 def InitEnv():
 	global g_fStart, g_bInit, g_sRole, g_sName, g_sJoin, g_iSpecies, g_iSystem, g_sAI, g_fLogEvery, g_fQuitAfter
+	global g_bDedicated, g_iMaxPlayers
 	g_bInit = 1
 	g_fStart = Now()
 	g_sRole = Env('BCMP_ROLE', '')
@@ -37,6 +40,10 @@ def InitEnv():
 	g_sAI = Env('BCMP_AI', 'attack')
 	g_fLogEvery = string.atof(Env('BCMP_TLOG_INTERVAL', '0.1'))
 	g_fQuitAfter = string.atof(Env('BCMP_QUIT_AFTER', '0'))
+	# BCMP_DEDICATED=1: the host is a dedicated server (-Dedicated), without a ship of its own
+	g_bDedicated = Env('BCMP_DEDICATED', '0') == '1' and g_sRole == 'host'
+	# BCMP_MAX_PLAYERS=<n>: the host raises the player limit (the menu allows 2..8)
+	g_iMaxPlayers = string.atoi(Env('BCMP_MAX_PLAYERS', '0'))
 	global g_iSeed
 	if g_sRole == 'host':
 		g_iSeed = string.atoi(Env('BCMP_SEED', '12345'))
@@ -159,6 +166,20 @@ def TryStartMission():
 		return
 	if g_sRole == 'host':
 		pMMS.SelectSystem(g_iSystem)
+		if g_iMaxPlayers > 0:
+			pMMS.g_iPlayerLimit = g_iMaxPlayers
+			pGame = App.MultiplayerGame_Cast(App.Game_GetCurrentGame())
+			if pGame:
+				pGame.SetMaxPlayers(g_iMaxPlayers)
+			Log('X MAXPLAYERS %d %d' % (Now(), g_iMaxPlayers))
+		if g_bDedicated:
+			# a dedicated server starts the game without a ship (StartMission skips UNKNOWN)
+			import Multiplayer.SpeciesToShip
+			import Multiplayer.Episode.Mission1.Mission1Menus
+			Multiplayer.Episode.Mission1.Mission1Menus.StartMission(Multiplayer.SpeciesToShip.UNKNOWN, pMMS.g_iSystem)
+			Log('X DEDICATED %d system=%d client=%d' % (Now(), pMMS.g_iSystem, App.g_kUtopiaModule.IsClient()))
+			SetState('ingame')
+			return
 	else:
 		if App.IsNull(Multiplayer.MissionShared.g_pStartingSet):
 			return
@@ -301,17 +322,22 @@ def InGame():
 		return
 	InstallHandlers()
 	pPlayer = pGame.GetPlayer()
-	if not pPlayer or pPlayer.IsDead():
+	if g_bDedicated:
+		# no ship: only watch and log
+		pPlayer = None
+		DamageEnginesOnce(None)
+	elif not pPlayer or pPlayer.IsDead():
 		if InState() > 8.0:
 			SpawnShip()
 			SetState('ingame')
 		return
-	if g_sAI == 'attack':
-		Pilot(pPlayer)
-	if InState() > 5.0:
-		TestInfoPaneGuard()
-	DamageEnginesOnce(pPlayer)
-	KickShip(pPlayer)
+	else:
+		if g_sAI == 'attack':
+			Pilot(pPlayer)
+		if InState() > 5.0:
+			TestInfoPaneGuard()
+		DamageEnginesOnce(pPlayer)
+		KickShip(pPlayer)
 	t = Now()
 	LogSubsystems(t)
 	LogBanks(t)
@@ -327,7 +353,7 @@ def InGame():
 		if pHull:
 			fHull = pHull.GetCondition()
 		iLocal = 0
-		if pShip.GetObjID() == pPlayer.GetObjID():
+		if pPlayer and pShip.GetObjID() == pPlayer.GetObjID():
 			iLocal = 1
 		kFwd = pShip.GetWorldForwardTG()
 		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d %.3f %.3f %.3f' % (t, fGameTime, pShip.GetName(), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying(), kFwd.GetX(), kFwd.GetY(), kFwd.GetZ()))
@@ -337,6 +363,12 @@ def LogTorpedoes(t, pPlayer):
 	# Q t torpedo-id shooter x y z: every torpedo in our set (BCMP_LOG_TORPS=1)
 	if Env('BCMP_LOG_TORPS', '1') != '1':
 		return
+	if pPlayer is None:
+		# dedicated server: the set of any ship
+		lShips = GetShips()
+		if not lShips:
+			return
+		pPlayer = lShips[0][1]
 	pSet = pPlayer.GetContainingSet()
 	if not pSet:
 		return
@@ -497,10 +529,12 @@ def DamageEnginesOnce(pPlayer):
 	if sKind == 'hull':
 		# BCMP_DAMAGE_KIND=hull: set the hull of every other player's ship to that fraction
 		for (iID, pShip) in GetShips():
-			if pShip.GetObjID() != pPlayer.GetObjID() and pShip.GetHull():
+			if (pPlayer is None or pShip.GetObjID() != pPlayer.GetObjID()) and pShip.GetHull():
 				pHull = pShip.GetHull()
 				pHull.SetCondition(pHull.GetMaxCondition() * fFrac)
 				Log('X DAMAGE %d hull %s %.2f' % (Now(), pShip.GetName(), fFrac))
+		return
+	if pPlayer is None:
 		return
 	pImp = pPlayer.GetImpulseEngineSubsystem()
 	if pImp:

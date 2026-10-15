@@ -24,6 +24,8 @@ def main():
     ap.add_argument('--species', default='1,2')
     ap.add_argument('--clients', type=int, default=1)
     ap.add_argument('--solo', action='store_true')
+    ap.add_argument('--dedicated', action='store_true')
+    ap.add_argument('--max-players', type=int, default=0)
     ap.add_argument('--nowait', action='store_true')
     ap.add_argument('--nodll', action='store_true')
     ap.add_argument('--set', action='append', default=[])

@@ -12,8 +12,9 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import analyze as A
 
-ROLE_NAMES = {'host': 'Ace', 'client': 'Bravo', 'client2': 'Charlie', 'client3': 'Delta', 'client4': 'Echo',
-              'client5': 'Foxtrot'}
+# ship names of the test pilot (mptest.py): the host's default name, then the clients' -Name
+NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima', 'Mike', 'November', 'Oscar', 'Papa']
+ROLE_NAMES = dict([('host', 'Ace'), ('client', 'Bravo')] + [('client%d' % k, NAMES[k]) for k in range(2, 16)])
 
 
 def hits_with_src(lg):
@@ -72,8 +73,10 @@ def main():
                     vs_shooter.setdefault(kind, []).append(tt - ts)
     print('client - host: n=%d median %+d ms, 10th %+d, 90th %+d' % (
         len(vs_host), pct(vs_host, 0.5), pct(vs_host, 0.1), pct(vs_host, 0.9)))
-    print('client - host, torpedoes the host fired (the host shows its own torpedo): n=%d median %+d ms, 10th %+d, 90th %+d' % (
-        len(vs_host_shooter), pct(vs_host_shooter, 0.5), pct(vs_host_shooter, 0.1), pct(vs_host_shooter, 0.9)))
+    if vs_host_shooter:  # none with a dedicated server
+        print('client - host, torpedoes the host fired (the host shows its own torpedo): n=%d median %+d ms, 10th %+d, '
+              '90th %+d' % (len(vs_host_shooter), pct(vs_host_shooter, 0.5), pct(vs_host_shooter, 0.1),
+                            pct(vs_host_shooter, 0.9)))
     for kind in ('host', 'target owner', 'third party'):
         v = vs_shooter.get(kind, [])
         if v:

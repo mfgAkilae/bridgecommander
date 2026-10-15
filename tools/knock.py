@@ -24,6 +24,7 @@ def main():
         m = re.match(r'tlog_(host|client\d*)\.txt$', f)
         if m:
             logs[m.group(1)] = A.load(os.path.join(run, f))
+    A.trim(logs)
     for name in sorted({n for lg in logs.values() for n in lg[0]}):
         owner = max(logs, key=lambda r: sum(1 for x in logs[r][0].get(name, []) if x[4]))
         ref = [x for x in logs[owner][0][name] if x[4]]

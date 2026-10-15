@@ -105,6 +105,10 @@ def run_job(path, status):
             args += ['--' + k, str(job[k])]
     if job.get('solo'):
         args.append('--solo')
+    if job.get('dedicated'):
+        args.append('--dedicated')
+    if job.get('max_players'):
+        args += ['--max-players', str(job['max_players'])]
     if job.get('raise_once'):
         args.append('--raise-once')
     if job.get('test_infopane'):

@@ -152,14 +152,25 @@ for 11 s on average with v1.2.1 and for under 1 s with v1.3.0.
 Rubber-banding (100 ms steps in which a remote ship moves back against its direction of flight),
 six players, other clients' ships: 11.3 % in the original, 9.3 % with v1.1.0, 0.9 % with v1.2.0.
 
+Dedicated server with ten clients (eleven instances, 60 ms ±20 ms, 1 % loss): other clients' ships
+were 6.24 units off in the original and 0.10 with v1.7.0; torpedo hits seen by all ten clients: 72 of
+141 (original), 125 of 127 and 149 of 149 (v1.7.0); client phaser beams without damage on the host:
+43 % (original), 0.3–3 % (v1.7.0).
+
 Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 
 ## Open points
 
 Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 
-- Tested with up to six players in one sandbox, not over the internet and not with a dedicated
-  server (#13). Since v1.1.0 the host relays the received state of client ships
+- Tested in one sandbox with up to eleven players: a dedicated server with ten clients and a listen
+  server with ten clients (#13), not over the internet and not in games where only some players run
+  bcmpfix. The game's menu allows at most eight players; the tests raised the limit by script. With
+  ten clients and 60 ms bcmpfix kept positions within 0.1–0.2 units (original: 6.2), and 94–100 % of
+  the torpedo hits were seen by all clients (original: 51 %); the host's upload was about 87 kB/s. On a dedicated
+  server the first client's ships can collide with the host's own object IDs, and then that ship is
+  missing for everyone (a bug of the original game, seen once, #24). Mixed games and internet
+  connections: #26. Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
 - Since v1.4.0 remote ships follow the velocity measured from received positions (#11): in turns
   their lateral error dropped from 0.2–0.3 to about 0.05 units and their nose from 30–40° to a few
@@ -217,7 +228,8 @@ Requirements: Windows 10/11 Pro with Windows Sandbox, Python 3.10 on the host, M
    start it. The sandbox agent copies the game to local disk and waits for jobs.
 4. Set `BCMP_SBX` to the `sbx` folder and submit jobs from the host, for example
    `python -I tools/sbx_job.py run1 --fixes on --latency 60 --jitter 20 --loss 10 --seconds 180`.
-   Results land in `sbx/runs/<name>/`.
+   More players: `--clients 10 --species 1,2,6,7,8,10`; a dedicated server: `--dedicated`; more
+   than eight players: `--max-players 12`. Results land in `sbx/runs/<name>/`.
 5. Compare: `python -I tools/analyze.py sbx/runs/run1`.
 
 `mptest.py` refuses to start the game outside Windows Sandbox: two windowed instances grab mouse and

@@ -18,7 +18,8 @@ IN_SANDBOX = os.environ.get('USERNAME', '').upper() == 'WDAGUTILITYACCOUNT'
 HOST_ADDR = '127.0.0.2'
 
 
-NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel']
+NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima',
+         'Mike', 'November', 'Oscar', 'Papa']
 
 FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0, 'FixProxyFirstFrame': 0,
              'NoCorrectionDeadband': 0, 'CorrectionGainPercent': 100, 'StateUpdateIntervalMs': 100,
@@ -58,7 +59,9 @@ def main():
     ap.add_argument('--jitter', type=int, default=0)
     ap.add_argument('--loss', type=int, default=0)
     ap.add_argument('--species', default='1,2', help='comma separated, one per player (cycled)')
-    ap.add_argument('--clients', type=int, default=1, help='number of client instances (1-7)')
+    ap.add_argument('--clients', type=int, default=1, help='number of client instances (1-15)')
+    ap.add_argument('--dedicated', action='store_true', help='the host is a dedicated server (-Dedicated, no ship)')
+    ap.add_argument('--max-players', type=int, default=0, help='the host raises the player limit (menu: 2-8)')
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--set', action='append', default=[], help='override a [Fixes] key, e.g. CorrectionGainPercent=300')
     ap.add_argument('--set-host', action='append', default=[], help='like --set, host only')
@@ -84,9 +87,12 @@ def main():
     if a.solo:
         roles = roles[:1]
     stagger = 3 if len(roles) > 2 else 0
+    many = len(roles) > 6
     for i, (role, name, bind, seed) in enumerate(roles):
         sp = species[i % len(species)]
-        if IN_SANDBOX:
+        if IN_SANDBOX and many:
+            x, y = (i % 4) * 420, (i // 4) * 300
+        elif IN_SANDBOX:
             x, y = (i % 3) * 660, (i // 3) * 520
         else:
             x, y = 2900 + (i % 2) * 680, 650 + (i // 2) * 200
@@ -114,6 +120,8 @@ def main():
             'BCMP_DAMAGE_AT': a.damage.split(':')[0] if a.damage else '-1',
             'BCMP_DAMAGE': a.damage.split(':')[1] if ':' in a.damage else '0.2',
             'BCMP_DAMAGE_KIND': a.damage.split(':')[2] if a.damage.count(':') >= 2 else 'impulse',
+            'BCMP_DEDICATED': '1' if a.dedicated and role == 'host' else '0',
+            'BCMP_MAX_PLAYERS': str(a.max_players) if role == 'host' else '0',
         })
         for f in ('tlog_%s.txt' % role,):
             p = os.path.join(out, f)
@@ -121,7 +129,7 @@ def main():
                 os.remove(p)
         # built-in developer options parsed by the app start routine (0x004388A0)
         if role == 'host':
-            gargs = ['-Listener', '-Mission', 'Mission1']
+            gargs = ['-Dedicated' if a.dedicated else '-Listener', '-Mission', 'Mission1']
         else:
             gargs = ['-Client', '-IP', HOST_ADDR, '-Name', name]
         env['BCMP_CMDLINE'] = '1'

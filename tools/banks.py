@@ -9,8 +9,12 @@ import os
 import re
 import sys
 
-ROLE_NAMES = {'host': 'Ace', 'client': 'Bravo', 'client2': 'Charlie', 'client3': 'Delta', 'client4': 'Echo',
-              'client5': 'Foxtrot'}
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import analyze  # noqa: E402
+
+# ship names of the test pilot (mptest.py): the host's default name, then the clients' -Name
+NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima', 'Mike', 'November', 'Oscar', 'Papa']
+ROLE_NAMES = dict([('host', 'Ace'), ('client', 'Bravo')] + [('client%d' % k, NAMES[k]) for k in range(2, 16)])
 
 
 def intervals(path):
@@ -32,6 +36,7 @@ def main():
     n = matched = only_shooter = only_peer = 0
     delays, ddur, short_missing, short_all = [], [], 0, 0
     for run in sys.argv[1:]:
+        w0, w1 = analyze.common_window(run)
         logs = {}
         for f in os.listdir(run):
             m = re.match(r'tlog_(host|client\d*)\.txt$', f)
@@ -43,6 +48,8 @@ def main():
             own = {k: v for k, v in logs[role].items() if k[0] == name}
             for k, lst in own.items():
                 for t0, t1, tgt in lst:
+                    if not w0 <= t0 <= w1:
+                        continue
                     short = t1 - t0 < 300
                     for r, lg in logs.items():
                         if r == role:
@@ -64,6 +71,8 @@ def main():
                     if k[0] != name:
                         continue
                     for t0, t1, tgt in lst:
+                        if not w0 <= t0 <= w1:
+                            continue
                         if not [x for x in own.get(k, []) if -300 <= t0 - x[0] <= 900]:
                             only_peer += 1
     delays.sort()

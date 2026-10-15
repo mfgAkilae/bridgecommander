@@ -14,6 +14,9 @@ import os
 import re
 import sys
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import analyze  # noqa: E402
+
 
 def load(path):
     ev = []
@@ -43,6 +46,7 @@ def first(lst, t0, cond, limit=1500):
 def main():
     stats = {}
     for run in sys.argv[1:]:
+        w0, w1 = analyze.common_window(run)
         logs = {}
         for f in os.listdir(run):
             m = re.match(r'tlog_(host|client\d*)\.txt$', f)
@@ -56,6 +60,8 @@ def main():
                 _, t0, ship, bits, hits, on = e
                 pb, ph = prev.get(ship, (0, 0))
                 prev[ship] = (bits, hits)
+                if not w0 <= t0 <= w1:
+                    continue
                 for kind, new, mask_i, rx in (('start', bits & ~pb, 3, 'PS'), ('hit', hits & ~ph, 4, 'PH')):
                     for i in range(32):
                         if not new & (1 << i):

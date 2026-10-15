@@ -35,6 +35,7 @@ def combat(run):
         m = re.match(r'tlog_(host|client\d*)\.txt$', f)
         if m:
             logs[m.group(1)] = A.load(os.path.join(run, f))
+    A.trim(logs)
     roles = sorted(logs, key=A.role_key)
     if 'host' not in logs:
         return

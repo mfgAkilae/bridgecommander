@@ -690,3 +690,82 @@ the reports came only through the host, no direct packets. Torpedo hits: client 
 −68 ms (median); shield/hull differed on 10, 3 and 13 matched hits. Kick test: peak error median 3.4
 units, max 5.4. Join test: every client saw every ship. Installer update from v1.6.0 tested. No
 crashes.
+
+## Issue #13: dedicated server and ten clients (v1.7.0)
+
+Eleven game instances in one Windows Sandbox: a dedicated server (`stbc.exe -Dedicated`, no ship of
+its own) and ten clients, each with the scripted pilot, 180 s per run, mixed Federation, Klingon,
+Romulan and Cardassian ships, exact v1.7.0 release build unless noted. The game's menu allows at
+most eight players (`MissionMenusShared.MAX_PLAYER_LIMIT`); the test pilot raises the limit of the
+host's game to 12 (`MultiplayerGame.SetMaxPlayers`, the field at +0x1FC), and all ten clients joined
+and played. One listen-server run (the host plays too: eleven players) for comparison.
+
+Test harness: `mptest.py --dedicated --max-players N` and up to 15 clients; `sbx_job.py` passes both.
+The analysis tools now only count what happens while every instance is in the game: `analyze.py`
+(positions) drops the samples after the first player quits, `banks.py`, `phasers.py` and
+`phasertiming.py` only take events from 5 s after the last player joined to 1 s before the first
+one quits. With ten clients that join and leave 3 s apart, 30 s at each end had distorted the
+results: a ship that left is logged with stale or wrong positions, and a player who has not joined
+yet cannot show a beam. The six-player release check runs of v1.7.0 are evaluated the same way
+below (their phaser numbers are lower than in the v1.7.0 section, which counted the join and leave
+phases).
+
+Positions (mean / 95th percentile in game units, backward steps), torpedo hits:
+
+| Run | Host sees clients | Clients see clients | Torpedo hits on the host seen by all ten clients | Clients − host (median) |
+|---|---|---|---|---|
+| dedicated, original game (`--fixes off`), 60 ms ±20 ms, 1 % loss | 2.38 / 5.38, 0.7 % | 6.24 / 12.15, 3.9 % | 72 of 141 | +176 ms |
+| dedicated, v1.7.0, 60 ms (run a) | 0.08 / 0.17, 0.0 % | 0.10 / 0.23, 0.1 % | 125 of 127 | −70 ms |
+| dedicated, v1.7.0, 60 ms (run b) | 0.09 / 0.18, 0.0 % | 0.55 / 0.27, 0.0 % (*) | 149 of 149 | −77 ms |
+| dedicated, v1.7.0, all hulls at 5 % after 40 s | 0.11 / 0.23, 0.1 % | 0.16 / 0.34, 0.2 % | 133 of 140 | −88 ms |
+| dedicated, v1.7.0, 150 ms ±50 ms, 5 % loss | 0.19 / 0.41, 0.2 % | 0.30 / 0.64, 1.0 % | 142 of 151 | −97 ms |
+| listen server (eleven players), v1.7.0, 60 ms | 0.13 / 0.25, 0.0 % (clients see the host: 0.16 / 0.32) | 0.17 / 0.36, 0.2 % | 116 of 116 | −98 ms |
+| six players (v1.7.0 release check, same evaluation) | 0.05 / 0.09–0.10, 0.0–0.4 % | 0.07 / 0.14–0.15, 0.0–0.4 % | 68 of 70, 77 of 77, 49 of 49 | −68 … −72 ms |
+
+(*) One client's respawned ship was never created on the dedicated server (see below); that client
+then got no position updates for 20 s, and its view of the others drifted by up to 117 units. Without
+that client the other clients saw each other with 0.12 / 0.26.
+
+Phasers (in the common phase):
+
+| Run | bank firings missing on another peer | beams the shooter hit and another peer did not show | client beams without damage on the host | beams only other peers showed | start delay (median) |
+|---|---|---|---|---|---|
+| dedicated, original game | 69.6 % | 55.6 % | 42.5 % | 464 | 323 ms |
+| dedicated, v1.7.0, 60 ms (a, b) | 0.2 %, 2.5 % | 0.2 %, 2.7 % | 0.3 %, 3.0 % | 10, 20 | 70–72 ms |
+| dedicated, v1.7.0, hulls at 5 % | 2.1 % | 2.8 % | 0.6 % | 25 | 72 ms |
+| dedicated, v1.7.0, 150 ms, 5 % loss | 2.0 % | 3.7 % | 0.4 % | 33 | 170 ms |
+| listen server, v1.7.0, 60 ms | 0.3 % | 0.3 % | 0.6 % (host's beams a client did not show: 1.8 %) | 50 | 76 ms |
+| six players (v1.7.0 release check) | 0.0–0.1 % | 0.0–0.3 % | 0.0–0.6 % | 0–6 | 57–58 ms |
+
+The host's phaser hits (0.5 s bins) were also on the clients in 99–100 % (original: 73–74 %). The
+direct phaser reports worked with ten clients: each client got the nine others from the host and sent
+and received its reports directly. Telemetry: a report reached another peer a median 83–89 ms after
+the owner's change (60 ms), and the bank started 1 ms after its arrival.
+
+Load: the host's upload was 86–87 kB/s as a dedicated server and 96 kB/s (peak 113) as a listen
+server with ten clients, against 26 kB/s with six players and 39 kB/s in the original game with ten
+clients (bcmpfix sends state updates twice as often at close range and triples the distances of the
+update tiers). Each client received about 9 kB/s. The jumps in the table's runs (13, 0, 82, 102 and
+26 in the listen run, none with six players) came almost all in bursts: one instance saw all ships
+jump in the same second, a stall of that instance while eleven games shared the sandbox's CPU.
+
+Findings:
+
+- **Dedicated server: object ID collision (stock bug, #24).** Network objects get IDs from a range per
+  player slot: slot 0 from 1073741823, slot 1 from 1074003967, and so on (0x40000 apart). On a listen
+  server the host is slot 0. On a dedicated server the first client gets slot 0, and the host gives
+  its own local objects (the torpedo copies of every player's shots) IDs from the same range. In run b
+  the first client respawned with ID 1073742099, which the host was using for a torpedo copy at that
+  moment; the host's object reader refused the create message (`object from network: ... NOT
+  created`). Nobody saw that client's new ship, and the host sent the client no more state updates
+  (the client's input dropped from 9 to 0.9 kB/s). It happened once in about 1300 ships created from
+  network messages in these runs. The original game has the same ID ranges; bcmpfix does not change
+  them.
+- **Tables per remote ship are never cleared (bcmpfix, #25).** The phaser reports (32 entries), the
+  latency per ship (64), and the velocity and orientation tracking of remote ships (64 each) keep an
+  entry for every ship ID or proxy they have seen; when a table is full, a new ship takes the entry
+  at its ID modulo the table size, possibly a live ship's. A respawn creates a new ship. The runs here
+  had at most 14 ship IDs with phaser reports, so it did not show; long games with many players and
+  respawns can reach it.
+- The original game with ten clients: half of the torpedo hits were missing on at least one client,
+  and 43 % of the clients' phaser beams did no damage on the host.
