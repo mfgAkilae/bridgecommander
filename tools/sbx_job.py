@@ -32,6 +32,8 @@ def main():
     ap.add_argument('--test-set', action='append', default=[])
     ap.add_argument('--raise-once', action='store_true')
     ap.add_argument('--test-infopane', action='store_true')
+    ap.add_argument('--damage', default='')
+    ap.add_argument('--kick', default='')
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
     ap.add_argument('--steps', default='', help='JSON file with program steps instead of a game run (see sbx_runner)')
     a = ap.parse_args()
@@ -45,13 +47,15 @@ def main():
     job['shots'] = [int(x) for x in a.shots.split(',') if x]
     if a.steps:
         job['steps'] = json.load(open(a.steps))
+    done = os.path.join(SBX, 'done', a.name + '.json')
+    if os.path.exists(done):
+        os.remove(done)  # an older run of the same name must not count as finished
     tmp = os.path.join(SBX, 'jobs', a.name + '.tmp')
     json.dump(job, open(tmp, 'w'))
     os.replace(tmp, os.path.join(SBX, 'jobs', a.name + '.json'))
     print('submitted', a.name, flush=True)
     if a.nowait:
         return
-    done = os.path.join(SBX, 'done', a.name + '.json')
     deadline = time.time() + a.seconds + 300
     while time.time() < deadline:
         if os.path.exists(done):

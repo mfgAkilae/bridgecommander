@@ -12,6 +12,7 @@ typedef struct Config {
     int fixDeltaBase;       /* receiver: delta relative to last absolute, not accumulated */
     int fixProxyInit;       /* NetworkAI first-frame time init */
     int noDeadband;         /* NetworkAI: correct small position errors too */
+    int symmetricSpawn;     /* remote torpedo copies keep the shooter's guidance values and direction */
     int fixTorpedoFlags;    /* torpedo fire message: sound/skew bits in the order the receiver reads them */
     float correctionGain;   /* NetworkAI position correction gain (1 = original 1/s) */
     int smoothCorrection;   /* never correct a remote ship backwards faster than half its speed */
@@ -25,6 +26,9 @@ typedef struct Config {
     int maxLeadMs;          /* cap for latency compensation */
     int hostRelay;          /* host writes client ships from the received state, not its proxy */
     int noScriptConsole;    /* script errors: log and continue instead of the blocking debug console */
+    float lodScale;         /* state-update distance LOD thresholds x this (1 = stock) */
+    int knockbackCorrection; /* follow the measured velocity while a ship is knocked off its nose */
+    int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
     int qpcRebase;          /* game clock relative to process start, not boot */
@@ -101,5 +105,7 @@ int orient_predict(BYTE *ai, float *f, float *u);
 int orient_target(BYTE *ai, float *out);
 void velo_on_update(BYTE *ai, int leadMs, const float *p0);
 int velo_target(BYTE *ai, float *target, float *dir);
+int velo_knocked(BYTE *ai, float proxySpeed);
 void scripterr_install(void);
+void join_install(void);
 unsigned long scripterr_count(void);

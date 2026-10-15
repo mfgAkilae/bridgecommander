@@ -69,6 +69,17 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
 11. **Lagging proxy orientation.** Remote ships turn physically towards the reported direction and
     are driven along their own nose. After a sharp turn at low speed the nose lags by more than 90°
     for seconds, the ship flies the wrong way and is dragged back.
+12. **Swapped torpedo flags.** The fire message's "launch sound" and "launch sideways" bits are
+    swapped between sender and receiver: other players see torpedoes leave the tube sideways and hear
+    no launch sound.
+13. **Ghost ship.** A ship spawned while another client joins can reach that client before its
+    mission set exists. The ship is created outside every set and never shown; the host's later copy
+    is dropped because the object already exists. That player never sees the ship.
+14. **Knockback.** The state update reports the magnitude of the velocity, and the game extrapolates
+    along the nose. After a hit's impulse or an explosion pushes a ship sideways or backwards, its
+    remote copies fall behind by tens of units for many seconds.
+15. **Distance LOD.** Beyond 228 units a player gets a fifth of the position updates of a ship,
+    beyond 343 units one per second; any change of course at that range is seen up to a second late.
 
 What bcmpfix does about it:
 
@@ -85,6 +96,10 @@ What bcmpfix does about it:
 | 9 | the panel update is skipped while the panel does not exist (v1.2.0) |
 | 10 | script errors go to `bcmpfix.log`, the game continues as in fullscreen (v1.2.0) |
 | 11 | a remote ship whose nose lags more than 30° behind the reported direction is turned towards it (v1.2.1) |
+| 12 | the sender writes the bits the way receivers read them (v1.3.0) |
+| 13 | the host's later copy is read into the ship without a set, which puts it into the mission set (v1.3.0) |
+| 14 | while the reported speed differs clearly from the remote copy's own, it follows the velocity measured from received positions; large backward errors are corrected at full speed (v1.3.0) |
+| 15 | LOD distances ×3 (v1.3.0) |
 
 ## Verification
 
@@ -114,8 +129,13 @@ per row; latency, jitter and loss apply per direction:
 
 Six players (host + five clients, mixed Federation, Klingon, Romulan and Cardassian ships), 60 ms
 ±20 ms, 1 % loss: other clients' ships were 7.09 units off in the original, 1.11 with v1.0.0 and
-0.73 with v1.1.0 (host relay) and 0.44 with v1.2.0. Torpedo hits seen by all five clients: 36 of 68
-(original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0), 58 of 61 (v1.2.0).
+0.73 with v1.1.0 (host relay), 0.44 with v1.2.0 and 0.41 with v1.3.0. Torpedo hits seen by all five
+clients: 36 of 68 (original), 36 of 72 (v1.0.0), 80 of 87 (v1.1.0), 58 of 61 (v1.2.0), 64 of 67 and
+108 of 109 (v1.3.0).
+
+Knockback (every player pushes its own ship sideways and back at 20 units/s every 30 s, six players):
+peak error after a kick, median 54 units with v1.2.1 and 5 with v1.3.0; the error stayed above 5 units
+for 11 s on average with v1.2.1 and for under 1 s with v1.3.0.
 
 Rubber-banding (100 ms steps in which a remote ship moves back against its direction of flight),
 six players, other clients' ships: 11.3 % in the original, 9.3 % with v1.1.0, 0.9 % with v1.2.0.
@@ -132,11 +152,14 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - A lateral error of about 0.2–0.5 units remains during turns: ships drift (their velocity lags the
   nose), and the game extrapolates along the nose. Turn prediction and velocity-based extrapolation
   were tried and were worse overall (#11, `docs/measurements.md`).
-- Clients show a torpedo hit about one latency after the host (#12). Occasionally the replay of a
-  host-confirmed hit fails on the client and the hit is not shown there (#15; improved in
-  v1.1.0: 80 of 87 hits seen by all five clients in a six-player game, 1 by none).
-- Torpedo flight paths still differ between players: swapped flag bits (#8) and different guidance
-  parameters on MP receivers (#9). The hit outcome is the host's.
+- Clients show a torpedo hit about one latency after the host (#12). Rarely the replay of a
+  host-confirmed hit fails on the client and the hit is not shown there (#15; v1.3.0: 64 of 67 and
+  108 of 109 hits seen by all five clients in six-player games, none by no client).
+- Torpedo flight paths still differ a little between players: each computer spawns another player's
+  torpedo from that player's ship as it sees it. Since v1.3.0 the flag bits (#8) and the receivers'
+  guidance values (#9) match the shooter's. The hit outcome is the host's.
+- Very short phaser hits (taps, the edge of a firing arc) that the shooter sees are often missing on
+  the other screens (1–5 % of the phaser hits per 0.5 s). Damage is applied once, by the host.
 - Peers without the mod keep the original behaviour. Torpedo authority turns on only when the host
   runs the mod (the client waits for an answer to its ping).
 - Developed with a DRM-free `stbc.exe` 1.1. Other executables are untested (#14); if the expected

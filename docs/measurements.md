@@ -258,3 +258,86 @@ Exact release build, default settings (`OrientationCorrection=1`, velocity and a
 
 (mean / 95th percentile, backward steps.) No hangs or script errors. The six-player run had 21
 shield/hull mismatches among the matched torpedo hits (earlier runs: 0–12), see issue #15.
+
+## Issue #18: ghost ship after a join race (v1.3.0)
+
+Six-player runs with 45 s, 100 ms ±40 ms latency and 3 % loss; the clients join one after another,
+3 s apart. Without the fix 4 of 6 runs had one client that never saw the ship of the player who
+joined just before it. The DLL log of that client always showed the same order: the forwarded create
+message of the other ship arrived first and created the ship without a set, the host's catch-up copy
+of the same ship followed 0.1–0.4 s later and was dropped ("object exists"). With `FixGhostShip=1`
+the catch-up copy put the ship into its set (4 cases in 4 runs, each logged as "ghost ship fix ...
+now in its set"); every client saw every ship, mean errors 0.2–1.0 units as in the other runs.
+
+## Issues #19 and #20: knockback and distance LOD (v1.3.0)
+
+`--kick 30:20:30`: from 30 s on every player adds 20 units/s to its own ship's velocity, half
+sideways and half backwards, once every 30 s (player i at 30 + 4 i s). Six players, 150 s, 60 ms
+±20 ms, 1 % loss. Each (kick, viewer) pair: peak error in the 15 s after the kick, and the time the
+error stays above 5 units. Kicks around the ship's own death are left out.
+
+| Build | Pairs | Peak error median / 90th / max | Time above 5 units, mean |
+|---|---|---|---|
+| v1.2.1 | 115 | 54.4 / 93.9 / 112.8 | 11.0 s |
+| + large backward errors at full gain | 130 | 11.3 / 15.6 / 20.0 | 6.4 s |
+| + `KnockbackCorrection` | 125–130 | 5.4 / 23–27 / 33–48 | 1.9–2.3 s |
+| + LOD thresholds ×3 (v1.3.0 defaults) | 120 | 4.7 / 6.3 / 8.3 | 0.6 s |
+
+v1.2.1 limited every backward correction to half the distance flown per frame, so a proxy that the
+real ship's knockback left behind never caught up. With full gain beyond 30 % of the speed it caught
+up, but slowly: the proxy kept flying along its nose at its engine speed (5.4 units/s in the trace)
+while the target moved sideways at |v| (17.9), which settled at a constant lag of about 6 units. The
+knockback path removes that lag. The remaining tail came from distant ships: beyond 343 units the stock
+LOD sends one update per second (beyond 228 units four), and the knocked ships flew apart. With the
+thresholds ×3 the client views in the kick run dropped from 1.93 / 10.52 (mean / 95th percentile) to
+1.01 / 4.27, the host's upload from 12 to 24.5 kB/s.
+
+Normal fights (no kicks, six players, 180 s, 60 ms): client views of other clients 0.43–0.47 / 0.81–0.89
+with the new defaults, 0.38–0.46 / 0.65–0.90 with both features off, 0.39 / 0.79 for v1.2.1 (run to
+run spread; the Delta ship alone varies between 0.4 and 0.8). The knockback path was active in at most
+0.8 % of the correction calls.
+
+## Issue #9: receiver torpedo values (v1.3.0)
+
+Six players, 180 s, 60 ms ±20 ms, 1 % loss, two runs per setting. "Moved": how far a client's replay
+had to move its own copy of the torpedo to the host's impact point (sum over the five clients).
+
+| `SymmetricTorpedoSpawn` | Replays | Moved, mean / max | Host torpedo hits seen by all five clients | Client hits the host did not have |
+|---|---|---|---|---|
+| 0 (stock) | 342, 357 | 11.2 / 818, 11.4 / 965 | 60 of 62, 58 of 61 | 19, 20 |
+| 1 | 528, 516 | 9.7 / 477, 8.4 / 323 | 93 of 93, 99 of 102 | 28, 11 |
+
+The host decides every hit with its own copy of the torpedo, and for a client's torpedo that copy is a
+remote spawn as well. With the shooter's values the host's copy flies the shooter's path, and all
+clients' copies start closer to it. On by default since v1.3.0.
+
+## Issue #15: duplicate hit reports (v1.3.0)
+
+The host reports each torpedo hit once. It only compared a hit with the last reported torpedo, and
+the stock collision code applies a hit that bleeds through the shield as two events (shield, then
+hull). Disruptors fire in pairs, so the events of two projectiles interleave (A shield, B shield,
+A hull, B hull) and the hull event of A was reported again. Clients replayed that second report with
+another local copy as a hull hit, or found no copy (`no_torpedo`). Six players, 180 s, 60 ms:
+
+| Build | Projectile hits on the host | Hit reports sent | Client replays (all five) | `no_torpedo` | `waiting` | Moved, mean |
+|---|---|---|---|---|---|---|
+| before (4 runs) | 93–104 | 105–118 | 460–528 | 32–89 | 44–96 | 8.4–9.7 (2 runs with this statistic) |
+| v1.3.0 (2 runs) | 123, 87 | 123, 87 | 591 of 594, 391 of 395 | 0, 0 | 0, 0 | 7.0, 7.3 |
+
+With one report per torpedo the replays no longer wait for a second copy, and shield/hull mismatches
+between host and clients dropped to 4 and 0 (before: 0–25 per run).
+
+## v1.3.0 release check
+
+Exact release build, default settings. Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.33 / 0.45, 0.0 % | 0.21 / 0.36, 0.2 % | – | 4 of 4 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.31 / 0.53, 0.1 % | 0.31 / 0.59, 0.0 % | – | 4 of 4 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.34 / 0.44, 0.0 % | 0.25 / 0.39, 0.0 % | 0.41 / 0.76, 0.1 % | 64 of 67 seen by all, 0 by none |
+
+A second six-player run with the same sources (development build): 0.37 / 0.46, 0.24 / 0.40,
+0.44 / 0.83, 108 of 109 hits seen by all. Kick test (exact build): 120 (kick, viewer) pairs, peak error
+median 5.3, 90th percentile 7.1, max 7.9 units, 0.8 s above 5 units on average. Join tests: the
+ghost-ship fix fired in 2 of 3 runs, every client saw every ship. No hangs or script errors.

@@ -310,7 +310,10 @@ def InGame():
 		Pilot(pPlayer)
 	if InState() > 5.0:
 		TestInfoPaneGuard()
+	DamageEnginesOnce(pPlayer)
+	KickShip(pPlayer)
 	t = Now()
+	LogSubsystems(t)
 	if t - g_fLastLog < g_fLogEvery * 1000.0:
 		return
 	g_fLastLog = t
@@ -326,6 +329,42 @@ def InGame():
 		if pShip.GetObjID() == pPlayer.GetObjID():
 			iLocal = 1
 		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d' % (t, fGameTime, pShip.GetName(), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying()))
+
+g_iNextSubLog = 0
+
+def Cond(pSub):
+	# condition of a subsystem as a fraction of its maximum, -1 if missing
+	if not pSub:
+		return -1.0
+	try:
+		return pSub.GetConditionPercentage()
+	except:
+		return -1.0
+
+def LogSubsystems(t):
+	# once a second per ship: shield facings and subsystem conditions as this instance sees them
+	# P t name sh0 .. sh5 impulse phaser torpedo pulse power sensor
+	global g_iNextSubLog
+	if t < g_iNextSubLog:
+		return
+	g_iNextSubLog = t + 1000
+	for (iID, pShip) in GetShips():
+		lVals = []
+		pShields = pShip.GetShields()
+		i = 0
+		while i < 6:
+			fV = -1.0
+			if pShields:
+				try:
+					fV = pShields.GetCurShields(i)
+				except:
+					fV = -1.0
+			lVals.append('%.1f' % fV)
+			i = i + 1
+		for pSub in (pShip.GetImpulseEngineSubsystem(), pShip.GetPhaserSystem(), pShip.GetTorpedoSystem(),
+				pShip.GetPulseWeaponSystem(), pShip.GetPowerSubsystem(), pShip.GetSensorSubsystem()):
+			lVals.append('%.3f' % Cond(pSub))
+		Log('P %d %s %s' % (t, pShip.GetName(), string.join(lVals, ' ')))
 
 def InstallHandlers():
 	global g_bHandlers
@@ -373,6 +412,64 @@ def OnExploding(pObject, pEvent):
 	except:
 		Log('D %d ?' % Now())
 	pObject.CallNextHandler(pEvent)
+
+g_fDamageAt = -2.0
+
+def DamageEnginesOnce(pPlayer):
+	# BCMP_DAMAGE_AT=<s>, BCMP_DAMAGE=<fraction>: the host sets its own ship's impulse
+	# engines to that fraction of their maximum once, <s> seconds after the start
+	# (tests remote views of a ship with damaged engines; the host owns all damage)
+	global g_fDamageAt
+	if g_fDamageAt == -2.0:
+		g_fDamageAt = string.atof(Env('BCMP_DAMAGE_AT', '-1'))
+	if g_fDamageAt < 0 or g_sRole != 'host':
+		return
+	if (Now() - g_fStart) / 1000.0 < g_fDamageAt:
+		return
+	g_fDamageAt = -1.0
+	fFrac = string.atof(Env('BCMP_DAMAGE', '0.2'))
+	sKind = Env('BCMP_DAMAGE_KIND', 'impulse')
+	if sKind == 'hull':
+		# BCMP_DAMAGE_KIND=hull: set the hull of every other player's ship to that fraction
+		for (iID, pShip) in GetShips():
+			if pShip.GetObjID() != pPlayer.GetObjID() and pShip.GetHull():
+				pHull = pShip.GetHull()
+				pHull.SetCondition(pHull.GetMaxCondition() * fFrac)
+				Log('X DAMAGE %d hull %s %.2f' % (Now(), pShip.GetName(), fFrac))
+		return
+	pImp = pPlayer.GetImpulseEngineSubsystem()
+	if pImp:
+		pImp.SetCondition(pImp.GetMaxCondition() * fFrac)
+		Log('X DAMAGE %d impulse %.2f' % (Now(), fFrac))
+
+g_fKickNext = -2.0
+
+def KickShip(pPlayer):
+	# BCMP_KICK_AT=<s>, BCMP_KICK=<speed>, BCMP_KICK_EVERY=<s>: every player adds a
+	# velocity of <speed> (half sideways, half backwards) to its own ship, first at
+	# <s> + 4 * player index seconds, then every BCMP_KICK_EVERY seconds (simulates the
+	# knockback of a big hit: the velocity is no longer along the nose)
+	global g_fKickNext
+	if g_fKickNext == -2.0:
+		g_fKickNext = string.atof(Env('BCMP_KICK_AT', '-1'))
+		if g_fKickNext >= 0 and g_sRole != 'host':
+			g_fKickNext = g_fKickNext + 4.0 * string.atoi(('0' + g_sRole[6:]) or '0') + 4.0 * (g_sRole == 'client')
+	if g_fKickNext < 0 or (Now() - g_fStart) / 1000.0 < g_fKickNext:
+		return
+	fEvery = string.atof(Env('BCMP_KICK_EVERY', '0'))
+	if fEvery > 0:
+		g_fKickNext = g_fKickNext + fEvery
+	else:
+		g_fKickNext = -1.0
+	fKick = string.atof(Env('BCMP_KICK', '20'))
+	kFwd = pPlayer.GetWorldForwardTG()
+	kRight = pPlayer.GetWorldRightTG()
+	kVel = pPlayer.GetVelocityTG()
+	f = fKick * 0.7071
+	kNew = App.TGPoint3()
+	kNew.SetXYZ(kVel.GetX() + f * (kRight.GetX() - kFwd.GetX()), kVel.GetY() + f * (kRight.GetY() - kFwd.GetY()), kVel.GetZ() + f * (kRight.GetZ() - kFwd.GetZ()))
+	pPlayer.SetVelocity(kNew)
+	Log('X KICK %d %s %.1f' % (Now(), pPlayer.GetName(), fKick))
 
 g_iInfoPaneTest = -1
 

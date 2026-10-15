@@ -94,6 +94,63 @@ def combat(run):
             r, len(hbw), both, 100.0 * both / max(len(hbw), 1), conly))
 
 
+SUBS = ['impulse', 'phaser', 'torpedo', 'pulse', 'power', 'sensor']
+
+
+def load_p(path):
+    """P lines: t name sh0..sh5 impulse phaser torpedo pulse power sensor (once a second)."""
+    out = {}
+    for line in open(path, errors='replace'):
+        p = line.split()
+        if len(p) == 15 and p[0] == 'P':
+            out.setdefault(p[2], []).append((int(p[1]), [float(x) for x in p[3:]]))
+    return out
+
+
+def subsystems(run):
+    logs = {}
+    for f in os.listdir(run):
+        m = re.match(r'tlog_(host|client\d*)\.txt$', f)
+        if m:
+            logs[m.group(1)] = load_p(os.path.join(run, f))
+    if 'host' not in logs or not logs['host']:
+        return
+    host = logs['host']
+    shield_d, sub_d = [], {s: [] for s in SUBS}
+    for name, hs in host.items():
+        ts = [x[0] for x in hs]
+        smax = [max(x[1][i] for x in hs) or 1.0 for i in range(6)]
+        for r, lg in logs.items():
+            if r == 'host' or name not in lg:
+                continue
+            for t, v in lg[name]:
+                i = bisect.bisect_left(ts, t)
+                cand = [j for j in (i - 1, i) if 0 <= j < len(hs) and abs(hs[j][0] - t) < 600]
+                if not cand:
+                    continue
+                ref = hs[min(cand, key=lambda j: abs(hs[j][0] - t))][1]
+                for k in range(6):
+                    if v[k] >= 0 and ref[k] >= 0:
+                        shield_d.append(abs(v[k] - ref[k]) / smax[k])
+                for k, s in enumerate(SUBS):
+                    a, b = v[6 + k], ref[6 + k]
+                    if a >= 0 and b >= 0:
+                        sub_d[s].append(abs(a - b))
+    if shield_d:
+        shield_d.sort()
+        print('  shields vs host (per facing, fraction of max): mean %.3f p95 %.3f p99 %.3f (n=%d)' % (
+            sum(shield_d) / len(shield_d), shield_d[len(shield_d) * 95 // 100], shield_d[len(shield_d) * 99 // 100],
+            len(shield_d)))
+    parts = []
+    for s in SUBS:
+        d = sorted(sub_d[s])
+        if d:
+            parts.append('%s %.3f/%.3f' % (s, sum(d) / len(d), d[len(d) * 99 // 100]))
+    if parts:
+        print('  subsystem condition vs host (mean/p99 of |diff|): ' + ', '.join(parts))
+
+
 if __name__ == '__main__':
     for run in sys.argv[1:]:
         combat(run)
+        subsystems(run)

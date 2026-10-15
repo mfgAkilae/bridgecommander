@@ -40,11 +40,14 @@ void config_load(void)
     g_cfg.fixProxyInit = ini_int(ini, "Fixes", "FixProxyFirstFrame", 1);
     g_cfg.noDeadband = ini_int(ini, "Fixes", "NoCorrectionDeadband", 1);
     g_cfg.fixTorpedoFlags = ini_int(ini, "Fixes", "FixTorpedoFireFlags", 1);
+    g_cfg.symmetricSpawn = ini_int(ini, "Fixes", "SymmetricTorpedoSpawn", 1);
     g_cfg.correctionGain = ini_int(ini, "Fixes", "CorrectionGainPercent", 500) / 100.0f;
     g_cfg.smoothCorrection = ini_int(ini, "Fixes", "SmoothCorrection", 1);
     g_cfg.orientationCorrection = ini_int(ini, "Fixes", "OrientationCorrection", 1);
     g_cfg.arcExtrapolation = ini_int(ini, "Fixes", "ArcExtrapolation", 1);
     g_cfg.velocityExtrapolation = ini_int(ini, "Fixes", "VelocityExtrapolation", 0);
+    g_cfg.knockbackCorrection = ini_int(ini, "Fixes", "KnockbackCorrection", 1);
+    g_cfg.lodScale = ini_int(ini, "Fixes", "UpdateDistanceScalePercent", 300) / 100.0f;
     g_cfg.sendInterval = ini_int(ini, "Fixes", "StateUpdateIntervalMs", 50) / 1000.0f;
     g_cfg.retransmitMs = ini_int(ini, "Fixes", "ResendIntervalMs", 300);
     g_cfg.torpedoAuthority = ini_int(ini, "Fixes", "TorpedoHitAuthority", 1);
@@ -52,6 +55,7 @@ void config_load(void)
     g_cfg.maxLeadMs = ini_int(ini, "Fixes", "MaxLatencyCompensationMs", 300);
     g_cfg.hostRelay = ini_int(ini, "Fixes", "HostRelayReceivedState", 1);
     g_cfg.noScriptConsole = ini_int(ini, "Fixes", "NoScriptErrorConsole", 1);
+    g_cfg.fixGhostShip = ini_int(ini, "Fixes", "FixGhostShip", 1);
     g_cfg.mpScript = ini_int(ini, "Fixes", "ScriptLayer", 1);
     if (!g_cfg.mpScript)
         g_cfg.torpedoAuthority = g_cfg.latencyComp = 0;

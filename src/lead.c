@@ -108,7 +108,7 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
     }
     if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
         orient_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
-    if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.velocityExtrapolation)
+    if (ai && *(float *)(ai + 0x2C) != t0 && (g_cfg.velocityExtrapolation || g_cfg.knockbackCorrection))
         velo_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
     if (ai && trace_active())
         trace_update(ship, ai, before, ms);

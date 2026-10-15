@@ -45,6 +45,8 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
   - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
   - A ship whose nose lags more than 30° behind the direction its owner reported (after a sharp turn) is turned towards it, so it does not fly the wrong way and drift back.
+- **Knockback:** A hit or an explosion can push a ship sideways or backwards while its nose keeps pointing ahead. The game extrapolated it along its nose, and on the other screens it fell behind by tens of units for many seconds. While a ship is knocked off its course, bcmpfix now follows the velocity measured from its received positions.
+- **Distant ships:** The game sends fewer position updates for distant ships, one per second beyond 343 units. bcmpfix triples these distances. This doubles the host's upload (about 25 kB/s with six players).
 - **Three or more players:** The host passes on each player's ship as that player reported it (position, direction, speed), not its own smoothed copy.
 - **Latency compensation:** Players measure the network round trip to each other with pings. Remote ships are extrapolated by that time. Without this, you see every ship where it was one network latency ago.
 
@@ -60,14 +62,17 @@ With bcmpfix, the host also decides what everybody sees:
 
 All players then see the same hits and misses as the host, delayed by about one network latency.
 
+- **Torpedo paths:** Torpedoes fired by another player are created on your computer from the fire message. The original gave them more turning power and a longer guidance time there, re-aimed disruptor shots, and swapped two flags: they left the tube sideways and made no launch sound. bcmpfix keeps the shooter's values. This also matters on the host, whose copy decides the hit.
+
 ### 3. Network and timing
 
 - **Resending lost packets:** Guaranteed messages (firing, cloaking, deaths, game events) arrive in a fixed order. A lost packet used to hold up all following messages for at least 1 s. Now the resend happens after 0.3 s.
 - **Game clock:** The game clock was computed from the time since Windows started and stored as a 32-bit float. After days of uptime, frame timing became inaccurate by up to ±15 ms. Windows Fast Startup does not reset this time on shutdown. Now the clock counts from program start.
 
-### 4. Freezes
+### 4. Joining and freezes
 
 - **Joining a running game:** If a player's ship arrived while you were still joining, the game's own mission script failed. In windowed mode the game then froze. bcmpfix skips the failing step until the game is ready for it.
+- **Invisible ship after joining:** If another player spawned a ship while you were joining, that ship could stay invisible on your screen for the whole game. bcmpfix shows it when the host sends it again during your join.
 - **Script errors in windowed mode:** Any script error opened the "TG Python Exception Debug Console" in a separate window, and the game waited for keyboard input there. bcmpfix writes the error to `bcmpfix.log` and the game continues, as it does in fullscreen.
 
 You can turn off each fix separately in `bcmpfix.ini`. The file has comments.

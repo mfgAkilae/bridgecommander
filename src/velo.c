@@ -7,7 +7,9 @@
  * and the target is p0 + v * h (h = latency compensation + age of the update).
  * Mode 2 also estimates how fast the velocity turns and extrapolates along that arc.
  * The proxy itself is still flown by NetworkAI along its nose, i.e. with the drift
- * of its own ship class. */
+ * of its own ship class. Off by default (worse than the stock line in normal flight);
+ * KnockbackCorrection uses the same estimate only while a hit has knocked a ship off
+ * its nose (velo_knocked). */
 #include "common.h"
 
 double __cdecl sqrt(double);
@@ -30,6 +32,7 @@ static struct {
     float v[3];  /* estimated velocity */
     float w[3];  /* turn rate of the velocity (axis * rad/s) */
     int n;       /* number of velocity estimates since the last reset */
+    int knock;   /* knockback state (velo_knocked) */
 } g_ship[MAXSHIPS];
 
 static float game_time(void)
@@ -45,17 +48,19 @@ static float dot3(const float *a, const float *b)
 
 static int slot_of(BYTE *ai, int create)
 {
-    int i, freeSlot = -1;
+    int i, freeSlot = -1, oldest = 0;
     for (i = 0; i < MAXSHIPS; i++) {
         if (g_ship[i].ai == ai)
             return i;
         if (freeSlot < 0 && !g_ship[i].ai)
             freeSlot = i;
+        if (g_ship[i].gotAt < g_ship[oldest].gotAt)
+            oldest = i;
     }
     if (!create)
         return -1;
-    if (freeSlot < 0)
-        freeSlot = (int)(((DWORD)ai >> 4) % MAXSHIPS);
+    if (freeSlot < 0) /* reuse the slot that went longest without an update (torpedoes, dead ships) */
+        freeSlot = oldest;
     memset(&g_ship[freeSlot], 0, sizeof(g_ship[0]));
     g_ship[freeSlot].ai = ai;
     return freeSlot;
@@ -162,6 +167,33 @@ static void arc(const float *v, const float *w, float h, float *out)
     c = (float)cos(r * h);
     for (i = 0; i < 3; i++)
         out[i] = par[i] * h + perp[i] * (s / r) + kx[i] * ((1.0f - c) / r);
+}
+
+/* Knockback detection (KnockbackCorrection). The sender reports |velocity| as speed,
+ * and the proxy's engine flies at the owner's throttle speed, so in normal flight both
+ * agree (measured within 0.05). A hit's impulse (or an explosion) adds velocity in
+ * any direction: the reported speed jumps far above the proxy's own speed, and the
+ * real ship drifts sideways or backwards relative to its nose for seconds. Hysteresis:
+ * on above max(3, 30 %) difference, off below max(1.5, 15 %). */
+int velo_knocked(BYTE *ai, float proxySpeed)
+{
+    int i = slot_of(ai, 0);
+    float sp = *(float *)(ai + 0x54), d, ref;
+    if (i < 0)
+        return 0;
+    if (sp < 0.0f)
+        sp = -sp;
+    d = sp - proxySpeed;
+    if (d < 0.0f)
+        d = -d;
+    ref = proxySpeed > sp ? proxySpeed : sp;
+    if (g_ship[i].n < 2)
+        g_ship[i].knock = 0;
+    else if (!g_ship[i].knock && d > 3.0f && d > 0.3f * ref)
+        g_ship[i].knock = 1;
+    else if (g_ship[i].knock && (d < 1.5f || d < 0.15f * ref))
+        g_ship[i].knock = 0;
+    return g_ship[i].knock;
 }
 
 /* Extrapolated target and direction of flight now; 0 if no velocity estimate yet. */

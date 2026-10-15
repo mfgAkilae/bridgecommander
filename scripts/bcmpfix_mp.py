@@ -33,12 +33,11 @@ g_bHostHasMod = 0
 g_dRtt = {}                 # net id -> smoothed round trip time in ms
 g_iNextPing = 0
 g_iNextLead = 0
-g_iLastHitTorp = 0
-g_iLastHitTime = 0
+g_dHitSent = {}             # host: torpedo id -> ms of its hit report
 g_iErrors = 0
 g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, target id, rel x, y, z, hull]
 g_lWaiting = []             # client: hit reports without a local copy yet: [deadline ms, target, shooter, rel x, y, z, hull]
-g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0}
+g_dStats = {'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0}
 g_iNextStats = 0
 
 
@@ -296,7 +295,6 @@ def LogError(sWhere, eType, eValue):
 		DllLog('bcmpfix_mp %s: %s %s' % (sWhere, str(eType), str(eValue)))
 
 def SendHit(pEvent):
-	global g_iLastHitTorp, g_iLastHitTime
 	if not App.g_kUtopiaModule.IsHost() or Cfg('TorpedoHitAuthority') <= 0:
 		return
 	if pEvent.GetWeaponType() != 1:
@@ -307,11 +305,16 @@ def SendHit(pEvent):
 		return
 	iTorp = pTorp.GetObjID()
 	t = Ms()
-	# the stock collision code may apply one torpedo twice (shield, then hull)
-	if iTorp == g_iLastHitTorp and t - g_iLastHitTime < 200:
+	# the stock collision code may apply one torpedo twice (shield, then the part that
+	# bleeds through to the hull). Disruptors fire in pairs, so the events of two
+	# projectiles interleave: remember every reported torpedo, not only the last one
+	if g_dHitSent.has_key(iTorp) and t - g_dHitSent[iTorp] < 1000:
 		return
-	g_iLastHitTorp = iTorp
-	g_iLastHitTime = t
+	if len(g_dHitSent) > 64:
+		for iOld in g_dHitSent.keys():
+			if t - g_dHitSent[iOld] > 2000:
+				del g_dHitSent[iOld]
+	g_dHitSent[iTorp] = t
 	# GetWorldHitPoint() is not usable from script; at hit time the torpedo sits
 	# on the impact point anyway
 	kP = pTorp.GetWorldLocation()
@@ -411,6 +414,14 @@ def ReplayApproach(pTorp, pTarget, lEntry):
 	fSX = fX + fNX * fBack
 	fSY = fY + fNY * fBack
 	fSZ = fZ + fNZ * fBack
+	if lEntry[1] == 0:
+		# how far our copy is moved: distance between its path and the shooter's projectile
+		kT = pTorp.GetWorldLocation()
+		fD = math.sqrt((kT.GetX() - fSX) * (kT.GetX() - fSX) + (kT.GetY() - fSY) * (kT.GetY() - fSY) + (kT.GetZ() - fSZ) * (kT.GetZ() - fSZ))
+		g_dStats['moved_n'] = g_dStats['moved_n'] + 1
+		g_dStats['moved_sum'] = g_dStats['moved_sum'] + int(fD * 100)
+		if fD * 100 > g_dStats['moved_max']:
+			g_dStats['moved_max'] = int(fD * 100)
 	pTorp.SetTranslateXYZ(fSX, fSY, fSZ)
 	kNewV = App.TGPoint3()
 	kNewV.SetXYZ(-fNX * fSpeed, -fNY * fSpeed, -fNZ * fSpeed)

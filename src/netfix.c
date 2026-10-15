@@ -55,12 +55,14 @@ double __cdecl sqrt(double); /* not <math.h>: its logf clashes with ours */
 #define ABSF(x) ((x) < 0.0f ? -(x) : (x))
 
 typedef float *(__fastcall *PFN_GetPos)(void *obj, void *edx);
+#define ADDR_GET_VELOCITY_NF 0x005A05A0 /* PhysicsObjectClass::GetVelocityTG (thiscall) */
 typedef void(__fastcall *PFN_SetPos)(void *obj, void *edx, float *pos);
 typedef float *(__fastcall *PFN_GetVecOut)(void *obj, void *edx, float *out);
 
 static unsigned long g_heldBack; /* frames in which a backward correction was limited */
 static float g_veloDir[3];      /* direction of flight from velo.c for this correction call */
 static int g_veloDirValid;
+static int g_knocked; /* this correction call follows a knocked ship (velo_knocked) */
 
 /* Smooth correction (SmoothCorrection=1): the stock code moves the proxy straight
  * towards the target. When the proxy is ahead of the target (extrapolation overshot,
@@ -68,7 +70,11 @@ static int g_veloDirValid;
  * flight: the ship visibly jumps back (rubber-banding). Split the error into a part
  * along the direction of flight and a lateral part. Lateral and forward parts are
  * corrected as before; a backward part is limited to half the distance the ship flies
- * in this frame, so the ship only slows down until the target catches up. */
+ * in this frame, so the ship only slows down until the target catches up. Backward
+ * errors beyond 30 % of the speed (a hit knocked the real ship back) are corrected at
+ * full gain. While the ship is knocked off its nose (KnockbackCorrection, velo.c) the
+ * direction of flight is the measured velocity, and the proxy is also moved by the
+ * difference between that velocity and its own. */
 static void smooth_correct(BYTE *ai, void *ship, float dt)
 {
     void **vt = *(void ***)ship;
@@ -98,7 +104,14 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
     along = e[0] * m[0] + e[1] * m[1] + e[2] * m[2];
     back = along * k; /* along-track move this frame (negative = backwards) */
     if (back < 0.0f) {
-        float limit = 0.5f * ABSF(speed) * dt;
+        /* small overshoots (extrapolation, the ship slowed down): only slow down. Large
+         * ones (the real ship was knocked back by a hit, measured up to 40 units): the
+         * part beyond the threshold is corrected at full gain, otherwise the proxy
+         * never catches up. */
+        float thr = 0.3f * ABSF(speed), limit;
+        if (thr < 1.5f)
+            thr = 1.5f;
+        limit = 0.5f * ABSF(speed) * dt + (-along > thr ? (-along - thr) * k : 0.0f);
         if (-back > limit) {
             back = -limit;
             g_heldBack++;
@@ -106,12 +119,21 @@ static void smooth_correct(BYTE *ai, void *ship, float dt)
     }
     for (i = 0; i < 3; i++)
         newpos[i] = pos[i] + (e[i] - along * m[i]) * k + m[i] * back;
+    if (g_knocked) {
+        /* the proxy flies along its nose at its engine speed, the knocked ship along the
+         * measured velocity: move the proxy by the difference, so the proportional
+         * correction only has the residual error to remove (no steady lag) */
+        float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
+        for (i = 0; i < 3; i++)
+            newpos[i] += (m[i] * ABSF(speed) - pv[i]) * dt;
+    }
     if (trace_active()) {
         float tmp[3], *nose = ((PFN_GetVecOut)vt[0xAC / 4])(ship, 0, tmp);
         float lat2 = e[0] * e[0] + e[1] * e[1] + e[2] * e[2] - along * along;
-        tracef("C obj=%lu dt=%.4f along=%.3f lat=%.3f back=%.4f spd=%.2f nose.fwd=%.3f", *(DWORD *)((BYTE *)ship + 4), dt,
-               along, lat2 > 0.0f ? (float)sqrt(lat2) : 0.0f, back, speed,
-               nose[0] * m[0] + nose[1] * m[1] + nose[2] * m[2]);
+        float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
+        tracef("C obj=%lu dt=%.4f along=%.3f lat=%.3f back=%.4f spd=%.2f nose.fwd=%.3f pv=%.2f kn=%d", *(DWORD *)((BYTE *)ship + 4),
+               dt, along, lat2 > 0.0f ? (float)sqrt(lat2) : 0.0f, back, speed,
+               nose[0] * m[0] + nose[1] * m[1] + nose[2] * m[2], (float)sqrt(pv[0] * pv[0] + pv[1] * pv[1] + pv[2] * pv[2]), g_knocked);
     }
     ((PFN_SetPos)vt[0x78 / 4])(ship, 0, newpos);
 }
@@ -181,17 +203,25 @@ static void align_orientation(BYTE *ai, void *ship, float dt)
     ((PFN_Align)ADDR_ALIGN_TO_VECTORS)(ship, 0, f, u);
 }
 
+static int knocked(BYTE *ai, void *ship)
+{
+    float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
+    return velo_knocked(ai, (float)sqrt(pv[0] * pv[0] + pv[1] * pv[1] + pv[2] * pv[2]));
+}
+
 static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float dt)
 {
     (void)edx;
-    g_veloDirValid = 0;
-    if (g_cfg.velocityExtrapolation && ship) {
+    g_veloDirValid = g_knocked = 0;
+    if (ship && (g_cfg.velocityExtrapolation || (g_cfg.knockbackCorrection && knocked((BYTE *)self, ship)))) {
         /* replace NetworkAI's target (reported nose * speed) with the extrapolation
-         * along the velocity estimated from received positions (velo.c) */
+         * along the velocity estimated from received positions (velo.c): always with
+         * VelocityExtrapolation, otherwise while the ship is knocked off its nose */
         float t[3];
         if (velo_target((BYTE *)self, t, g_veloDir)) {
             memcpy((BYTE *)self + 0x30, t, 12);
             g_veloDirValid = g_veloDir[0] != 0.0f || g_veloDir[1] != 0.0f || g_veloDir[2] != 0.0f;
+            g_knocked = g_veloDirValid && !g_cfg.velocityExtrapolation;
         }
     } else if (g_cfg.orientationCorrection == 2 && g_cfg.arcExtrapolation && ship) {
         /* replace NetworkAI's straight-line target with the arc extrapolation */
@@ -212,6 +242,37 @@ unsigned long netfix_heldback(void)
 {
     return g_heldBack;
 }
+/* Distance LOD of state updates (UpdateDistanceScalePercent). The per-(object, peer)
+ * rate limiter (0x005A22A0) sends at the base interval near the peer's ship, at 2x
+ * from 170 units, 5x from 228 and once a second from 343 (114/170 in the other mode).
+ * A ship knocked away or fighting at range then gets 1-4 updates a second, and any
+ * change of course costs a second of wrong extrapolation (errors of 20-30 units).
+ * Scale the thresholds: the fcom operands are pointed at our own constants. */
+static float g_lod[4];
+
+static void patch_lod_operand(DWORD at, const char *op, DWORD orig, float *mine, const char *what)
+{
+    char e[32], r[32];
+    DWORD m = (DWORD)mine;
+    _snprintf(e, sizeof(e), "%s %02x %02x %02x %02x", op, orig & 255, (orig >> 8) & 255, (orig >> 16) & 255, orig >> 24);
+    _snprintf(r, sizeof(r), "%s %02x %02x %02x %02x", op, m & 255, (m >> 8) & 255, (m >> 16) & 255, m >> 24);
+    patch_bytes(at, e, r, what);
+}
+
+static void patch_update_lod(float scale)
+{
+    g_lod[0] = 114.0f * scale;
+    g_lod[1] = 170.0f * scale;
+    g_lod[2] = 228.0f * scale;
+    g_lod[3] = 343.0f * scale;
+    patch_lod_operand(0x005A25D2, "d8 15", 0x00892004, &g_lod[1], "update LOD distance 170");
+    patch_lod_operand(0x005A25E7, "d8 15", 0x008942AC, &g_lod[2], "update LOD distance 228");
+    patch_lod_operand(0x005A25FE, "d8 1d", 0x008942A8, &g_lod[3], "update LOD distance 343");
+    patch_lod_operand(0x005A2617, "d8 15", 0x008942A4, &g_lod[0], "update LOD distance 114");
+    patch_lod_operand(0x005A262C, "d8 1d", 0x00892004, &g_lod[1], "update LOD distance 170 (mode 2)");
+    logf("state-update distance LOD: thresholds x%.2f", scale);
+}
+
 static double g_nextSend;
 static unsigned long g_frames, g_sends;
 static double g_statT;
@@ -364,6 +425,8 @@ void netfix_install(void)
         redirect_call(ADDR_CALL_NETAI_CORRECT, (void *)hk_NetAICorrect, (void **)&o_NetAICorrect, ADDR_NETAI_CORRECT,
                       g_cfg.smoothCorrection ? "NetworkAI correction gain + no backward correction"
                                              : "NetworkAI correction gain");
+    if (g_cfg.lodScale > 0.0f && g_cfg.lodScale != 1.0f)
+        patch_update_lod(g_cfg.lodScale);
     if (g_cfg.retransmitMs > 0 && g_cfg.retransmitMs != 1000) {
         /* TGMessage ctor (0x006B82A0): mov ecx,1.0f; mov [eax+0x34],ecx (backoff step);
          * mov [eax+0x30],ecx (first resend). A lost guaranteed packet otherwise stalls
@@ -384,6 +447,17 @@ void netfix_install(void)
          * then get them right. */
         patch_bytes(0x0057CBA8, "c6 44 24 10 01", "c6 44 24 10 02", "torpedo fire flags: launch sound to bit1");
         patch_bytes(0x0057CBB7, "80 4c 24 10 02", "80 4c 24 10 01", "torpedo fire flags: skew to bit0");
+    }
+    if (g_cfg.symmetricSpawn) {
+        /* Remote torpedo spawn (0x0057D110), MP receivers only: guided torpedoes get
+         * max angular acceleration x1.5 and lifetime x1.25, unguided projectiles with a
+         * ship target (disruptor pulses) are re-aimed at the intercept point as this
+         * receiver predicts it. The copy then flies a different path than the shooter's
+         * projectile, which decides the hit (host authority replays it). Keep the
+         * shooter's values and direction. */
+        patch_bytes(0x0057D519, "d8 0d 50 05 89 00", "90 90 90 90 90 90", "remote torpedo spawn: no lifetime x1.25");
+        patch_bytes(0x0057D523, "d8 0d ac be 88 00", "90 90 90 90 90 90", "remote torpedo spawn: no angular accel x1.5");
+        patch_bytes(0x0057D540, "51 6a 00 e8 58", "e9 1a 02 00 00", "remote torpedo spawn: no re-aim");
     }
     if (g_cfg.sendInterval > 0.0f && g_cfg.sendInterval < 0.0999f) {
         static float interval;

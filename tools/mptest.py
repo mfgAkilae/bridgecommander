@@ -66,6 +66,8 @@ def main():
     ap.add_argument('--test-set', action='append', default=[], help='extra [Test] line, e.g. PythonTickDelayMs=1500')
     ap.add_argument('--raise-once', action='store_true', help='clients raise once in a script event handler')
     ap.add_argument('--test-infopane', action='store_true', help='call RebuildInfoPane once with no info pane')
+    ap.add_argument('--kick', default='', help='AT:SPEED[:EVERY] - every player kicks its own ship sideways/backwards (player i at AT+4*i s), e.g. 30:20:30')
+    ap.add_argument('--damage', default='', help='AT:FRACTION[:hull] - host damages its impulse engines (or the hull of all other ships) once, e.g. 60:0.2')
     a = ap.parse_args()
     if not IN_SANDBOX and os.environ.get('BCMP_ALLOW_HOST') != '1':
         sys.exit('refusing to start the game outside Windows Sandbox (set BCMP_ALLOW_HOST=1 to override)')
@@ -106,6 +108,12 @@ def main():
             'BCMP_SEED': str(seed),
             'BCMP_RAISE_ONCE': '1' if a.raise_once and role != 'host' else '0',
             'BCMP_TEST_INFOPANE': '1' if a.test_infopane else '0',
+            'BCMP_KICK_AT': a.kick.split(':')[0] if a.kick else '-1',
+            'BCMP_KICK': a.kick.split(':')[1] if ':' in a.kick else '20',
+            'BCMP_KICK_EVERY': a.kick.split(':')[2] if a.kick.count(':') >= 2 else '0',
+            'BCMP_DAMAGE_AT': a.damage.split(':')[0] if a.damage else '-1',
+            'BCMP_DAMAGE': a.damage.split(':')[1] if ':' in a.damage else '0.2',
+            'BCMP_DAMAGE_KIND': a.damage.split(':')[2] if a.damage.count(':') >= 2 else 'impulse',
         })
         for f in ('tlog_%s.txt' % role,):
             p = os.path.join(out, f)
