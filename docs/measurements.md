@@ -1073,3 +1073,85 @@ hits 100 %, positions 0.05–0.09. Kick test: peak error median 3.4, 90th percen
 (v1.7.2: 3.3–3.4, 5.1–5.2). Join test: every client saw every ship. Installer update from v1.7.2:
 settings kept, new files installed (`SnapNewShips` is on by default when the kept `bcmpfix.ini`
 lacks it). No crashes, no script errors.
+
+## Issue #30: remote phaser beams without hits (after v1.7.3)
+
+In the v1.7.3 release check one AI ship fired long beams at the host's ship at 162–175 units: the
+host showed hits, the four clients showed the beam without hits (95 of 2372 AI beams). It looked
+like the edge of the phaser range, but it is not:
+
+- Range test (`mptest.py --range`, `tools/rangetest.py`): the host's ship stands still and fires at
+  a ship it moves to 100–250 units, 15 s each. The host and both clients showed the same hits at
+  every distance, also beyond 175 units, with and without the fix.
+- In the release check run the clients' beam passed beside the host's ship and hit Delta, which
+  was behind it, 205 units away: the clients' copy of the bank aimed at a different ship.
+
+Test telemetry (`PB`: once a second per remote bank its beam state, the object its ray touches, its
+target, the owner's reported target and the point it aims at; `PG`: a remote bank's target differs
+from the owner's) found two ways the copy of a bank aims elsewhere than its owner's:
+
+- **Other target.** Each weapon system picks its banks' targets itself: when Fire fails for the
+  current target (out of the bank's arc or range), it goes on with the next target in its list
+  (0x00584E40), without stopping the bank. The receiver forces the arc test for banks the owner
+  fires (v1.6.0), so the copy never fails it and keeps the old target while the owner's bank has
+  switched. Caught once: a client's copy fired at Bravo for 4 s while the owner reported another
+  target.
+- **Other point.** The bank aims at its target plus an offset (bank +0x90; an AI picks a
+  subsystem), which the start-firing command carries and the weapon system's target list keeps
+  (+0xC4). A first fix aimed a retargeted bank at the target's centre; at close range (19–30
+  units) its ray then missed the target for seconds.
+
+Fix: every Fire of a bank its owner fires aims at the owner's reported target, at the point the
+weapon system's list has for it (`aim_at` in `src/phaser.c`; `[Test] PhaserOwnerTarget=0` turns it
+off for comparisons). Five players against five AI ships, 240 s, 60 ms ±20 ms, 1 % loss:
+
+| | v1.7.3 behaviour | first fix (target's centre) | fix |
+|---|---|---|---|
+| runs | 6 | 5 | 4 |
+| AI ships' beams the other peers did not show | 75 of 16308 (0.46 %) | 121 of 13088 (0.92 %) | 2 of 9080 (0.02 %) |
+| per run: AI beams shown | 98.8–100 % | 96.2–100 % | 99.9–100 % |
+| beams other peers showed and the shooter did not | 37 | 8 | 4 |
+| a copy fired at another target for 3 s or more | 1 | 0 | 0 |
+| a copy's ray missed its target for 3 s or more | 4 | 10 | 0 |
+| host's phaser hits (0.5 s bins) also on a client | 99–100 % | 99–100 % | 100 % |
+
+The v1.7.3 release check itself had 96.0 % (one long engagement) and the first 5-against-5 run with
+the v1.7.3 code 100 %: single runs vary a lot, so the table sums several.
+
+## The starbase mission ("Defend the Starbase", Mission 5)
+
+The test pilot plays the stock starbase mission with `mptest.py --mission 5 --teams 1,0,1,0,1,0
+--target team` (the host starts with `-Mission Mission5`; teams in role order, 1 = defenders,
+0 = attackers; attackers go for the starbase, defenders for the attackers). The host creates the
+starbase (`FedStarbase`, 220000 hull) with the mission's own `StarbaseAI`. Six players, 240–300 s,
+60 ms ±20 ms, 1 % loss, two runs (the second with all hulls at 3 % every 45 s, 11 deaths):
+
+| | run 1 | run 2 |
+|---|---|---|
+| position error, clients see the host's ships (mean / 95th) | 0.03 / 0.10 | 0.05 / 0.10 |
+| position error, the host sees the clients | 0.05 / 0.10 | 0.04 / 0.09 |
+| position error, clients see each other | 0.07 / 0.14 | 0.06 / 0.14 |
+| the starbase's phaser beams shown by the other peers | 100 % (1575) | 100 % (1405) |
+| the starbase's bank firings also on the other peers | 99.6 % | 100 % |
+| players' phaser beams shown by the other peers | 99.0 % | 98.1 % |
+| host's phaser hits (0.5 s bins) also on a client | 100 % | 100 % |
+| torpedo hits on the host seen by all clients | 154 of 170 | 170 of 183 |
+| torpedo hits a client showed and the host did not (all clients) | 55, 40 of them on the starbase | 32, 24 on the starbase |
+| hull values on the clients off the host's (mean) | 0.11 % | 0.22 % |
+
+The starbase is the host's ship like an AI ship, so since v1.7.3 its phasers are synchronised
+(#28); its banks always fired at one target at a time. The missing players' beams were
+mostly attackers' beams on the starbase and friendly fire. Torpedoes are less consistent than in
+deathmatch (73 of 73, 58 of 58 in the v1.7.3 release check): the defenders fly close to their
+starbase and their torpedoes pass right beside it. Each computer creates another player's torpedo
+from that player's ship as it sees it, so near a large object the copies part ways: on a client its
+copy hits the starbase, on the host it flies on and hits an attacker, and the host's hit cannot be
+replayed on that client because its copy is gone (#31). The damage is the host's.
+
+Ships that appear (`tools/spawn.py`): in one run a respawned ship came 375 units off on three
+clients and slid into place within a second, although `SnapNewShips` placed it at its first
+update: that update already carried the old position. In four more runs (183 ships appearing on
+a peer, 33 deaths) two ships came 25 and 38 units off on one client each, the others at most 4
+units. Holding back the host's relay of a client ship until the host had that ship's first update
+did not help (one ship then stayed 25 units off for a second while the host held back about 69000
+writes) and was dropped.

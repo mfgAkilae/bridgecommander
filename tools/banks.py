@@ -29,8 +29,9 @@ def base_name(n):
 
 
 def owns(role, name):
-    """the instance that flies the ship: the player's own, the AI ships on the host"""
-    return name == ROLE_NAMES.get(role) or (role == 'host' and name.startswith('AI'))
+    """the instance that flies the ship: the player's own; the host flies every other ship (AI
+    ships, the starbase of Mission 5)"""
+    return name == ROLE_NAMES.get(role) or (role == 'host' and name not in ROLE_NAMES.values())
 
 
 def intervals(path):
@@ -124,7 +125,7 @@ def main():
             if role not in logs:
                 continue
             own = {k: v for k, v in logs[role].items() if owns(role, k[0]) and
-                   (shooters == 'all' or (shooters == 'ai') == k[0].startswith('AI'))}
+                   (shooters == 'all' or (shooters == 'ai') == (k[0] not in ROLE_NAMES.values()))}
             for k, lst in own.items():
                 for t0, t1, tgt in lst:
                     if not w0 <= t0 <= w1:
@@ -147,7 +148,7 @@ def main():
                 if r == role:
                     continue
                 for k, lst in lg.items():
-                    if not owns(role, k[0]) or (shooters != 'all' and (shooters == 'ai') != k[0].startswith('AI')):
+                    if not owns(role, k[0]) or (shooters != 'all' and (shooters == 'ai') != (k[0] not in ROLE_NAMES.values())):
                         continue
                     for t0, t1, tgt in lst:
                         if not w0 <= t0 <= w1:

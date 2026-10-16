@@ -38,6 +38,7 @@ typedef struct Config {
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int fixDedicatedIds;    /* a dedicated server numbers its objects from slot 15, not the first client's slot 0 */
     int fixConditionInRange; /* script: ConditionInRange registers its group handlers once (issue #27) */
+    int phaserOwnerTarget;  /* test switch: remote banks the owner fires aim at the owner's target (issue #30) */
     int snapNewShips;       /* a new remote ship starts at its first received position, not the create message's */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */

@@ -79,7 +79,7 @@ col.c-problem { width: 44%; }
   <header>
     <div class="eyebrow">Star Trek: Bridge Commander 1.1 · multiplayer</div>
     <h1>bcmpfix: what changed, before and after</h1>
-    <p class="lede">Every fix from v1.0.0 to v1.7.3, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
+    <p class="lede">Every fix from v1.0.0 to v1.7.3 and the current main branch, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
     <div class="meta">
       <a href="https://github.com/mfgAkilae/bridgecommander">Repository</a>
       <a href="https://github.com/mfgAkilae/bridgecommander/releases/tag/v1.7.3">Release v1.7.3</a>
@@ -131,6 +131,7 @@ col.c-problem { width: 44%; }
         <tr><td>A beam the shooter hit is shown on the other screens</td><td class="num before">84–87 %</td><td class="num after">99.6–100 %</td><td class="ver">v1.6–v1.7</td></tr>
         <tr><td>Beam starts on the other screens after the shooter's</td><td class="num before">0.27 s</td><td class="num after">0.06–0.08 s</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/23">v1.7.0 #23</a></td></tr>
         <tr><td>AI ships: beams shown / same banks firing</td><td class="num before">91.7 % / 70.1 %</td><td class="num after">100 % / 99.4 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/28">v1.7.3 #28</a></td></tr>
+        <tr><td>Another screen keeps firing at the previous target (AI beams missing)</td><td class="num before">0.46 %</td><td class="num after">0.02 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/30">main #30</a></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -157,7 +158,7 @@ col.c-problem { width: 44%; }
     <h2>Still open</h2>
     <ul>
       <li>Real internet games behind NAT routers and firewalls are not tested yet (<a href="https://github.com/mfgAkilae/bridgecommander/issues/26">#26</a>).</li>
-      <li>At the edge of the phaser range a beam can hit on the host and show no hits on the other screens (<a href="https://github.com/mfgAkilae/bridgecommander/issues/30">#30</a>). The damage is the host's.</li>
+      <li>Starbase mission: torpedoes that pass close to the starbase hit it on some computers only (<a href="https://github.com/mfgAkilae/bridgecommander/issues/31">#31</a>). The damage is the host's.</li>
     </ul>
     <p>Test bed: up to eleven game instances in one Windows Sandbox, scripted pilots, latency and loss simulated per direction. Includes a 30-minute game with a dedicated server, ten clients and two AI ships without stalls, crashes or memory growth.</p>
   </div>

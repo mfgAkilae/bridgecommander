@@ -24,8 +24,9 @@ def base_name(n):
 
 
 def owns(role, name):
-    """the instance that flies the ship: the player's own, the AI ships on the host"""
-    return name == ROLE_NAMES.get(role) or (role == 'host' and name.startswith('AI'))
+    """the instance that flies the ship: the player's own; the host flies every other ship (AI
+    ships, the starbase of Mission 5)"""
+    return name == ROLE_NAMES.get(role) or (role == 'host' and name not in ROLE_NAMES.values())
 
 
 def beams(path):
@@ -67,7 +68,7 @@ def main():
         args.remove(shooters)
 
     def kind(src):
-        return shooters == 'all' or (shooters == 'ai') == src.startswith('AI')
+        return shooters == 'all' or (shooters == 'ai') == (src not in ROLE_NAMES.values())
     for run in [a for a in args if not a.startswith('--')]:
         w0, w1 = analyze.common_window(run)
         logs = {}

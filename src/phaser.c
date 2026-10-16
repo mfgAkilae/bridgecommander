@@ -22,14 +22,18 @@
  * beam reaches its hit state when the owner's does (not by the local 0.25 s growth timer),
  * a bank the weapon system does not feed is driven with the frame time (the host
  * applies its damage with it), and the hit that StopFiring applies to the ray's object
- * is applied only if the owner's ray was on an object at its stop. Six players, 60 ms:
- * bank firings only on the shooter 19-23 % -> 7-8 %; beams the shooter hit and another
- * machine did not show 13-16 % -> 2.5-4 %; beams other machines showed and the shooter did
- * not 44-70 -> 3-10; client shooters' beams without damage on the host 7-12 % -> 0-1.3 %.
+ * is applied only if the owner's ray was on an object at its stop, and the bank aims at the
+ * owner's reported target and the point on it from the start-firing command (issue #30).
+ * Six players, 60 ms: bank firings only on the shooter 19-23 % -> 7-8 %; beams the shooter
+ * hit and another machine did not show 13-16 % -> 2.5-4 %; beams other machines showed and
+ * the shooter did not 44-70 -> 3-10; client shooters' beams without damage on the host
+ * 7-12 % -> 0-1.3 %.
  *
  * Without it, PhaserSync=1 (experimental, v1.5.0) starts such banks with the stock checks,
  * 2 only blocks and stops them; the banks then match but the hits do not. */
 #include "common.h"
+
+double __cdecl sqrt(double); /* not <math.h>: its logf clashes with ours */
 
 #define ADDR_CUR_GAME 0x0097E238 /* Game_GetCurrentGame */
 #define GAME_PLAYER 0x54         /* the local player's ship */
@@ -87,7 +91,7 @@ static unsigned long g_forcedArc, g_skippedWait, g_driven, g_skippedStopHit;
 #define MAXOWN 17
 static struct {
     DWORD ship, bits, target, hits, on, seq;
-    DWORD sentBits, sentHits, sentOn;
+    DWORD sentBits, sentHits, sentOn, other;
     int sentValid, pending;
 } g_own[MAXOWN];
 static DWORD g_aiShips[MAXOWN - 1];
@@ -100,9 +104,63 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2);
 /* test mode: why a start of an owner-fired bank failed (results of Fire's checks) */
 static int g_diagTgt, g_diagRange;
 static double g_diagLast[MAXREMOTE][32];
+static DWORD g_diagWrongTgt[MAXREMOTE][32]; /* test telemetry: the last logged own target of a bank */
+static unsigned long g_retargeted;
+static double g_diagBeam[MAXREMOTE][32]; /* test telemetry: last PB line per remote bank */
 typedef BYTE *(__cdecl *PFN_FindObject)(int kind, DWORD id);
 typedef char(__fastcall *PFN_IsA)(void *obj, void *edx, int type);
 static unsigned long g_started, g_stopped;
+
+typedef float *(__fastcall *PFN_GetPosV)(void *obj, void *edx);
+
+/* test telemetry: a remote bank's beam once a second (state, the object its ray touches, its
+ * target and the distance to it, the beam length) */
+static void diag_beam(int s, int i, BYTE *ship, BYTE *b)
+{
+    BYTE *tgt;
+    float *p0, *p1, dx = 0, dy = 0, dz = 0;
+    if (now_sec() - g_diagBeam[s][i] < 1.0)
+        return;
+    g_diagBeam[s][i] = now_sec();
+    tgt = ((PFN_FindObject)ADDR_FIND_OBJECT)(0, *(DWORD *)(b + BANK_TARGET));
+    if (tgt) {
+        p0 = ((PFN_GetPosV)(*(void ***)ship)[0x94 / 4])(ship, 0);
+        dx = p0[0];
+        dy = p0[1];
+        dz = p0[2];
+        p1 = ((PFN_GetPosV)(*(void ***)tgt)[0x94 / 4])(tgt, 0);
+        dx -= p1[0];
+        dy -= p1[1];
+        dz -= p1[2];
+    }
+    tlog_printf("PB %ld %lu %d st=%d obj=%lu tgt=%lu rep=%lu d=%.1f len=%.1f off=%.2f,%.2f,%.2f fed=%d", tlog_ms(),
+                *(DWORD *)(ship + 4), i, *(int *)(b + BANK_BEAM_STATE), *(DWORD *)(b + BANK_BEAM_OBJECT),
+                *(DWORD *)(b + BANK_TARGET), g_remote[s].target, tgt ? (float)sqrt(dx * dx + dy * dy + dz * dz) : -1.0f,
+                *(float *)(b + 0xF0), *(float *)(b + BANK_TARGET + 4), *(float *)(b + BANK_TARGET + 8),
+                *(float *)(b + BANK_TARGET + 12), g_remote[s].fed[i] + 1 >= g_frame);
+}
+
+/* aim a remote bank at the owner's target. The weapon system keeps a list of the targets its
+ * start-firing commands named (+0xC4: nodes {entry, next}, entry {target ID, offset on it}); the
+ * offset is the point the owner aims at (an AI picks a subsystem). Without an entry: the centre. */
+#define BANK_SYSTEM 0x24
+#define SYS_TARGETS 0xC4
+static void aim_at(BYTE *b, DWORD target)
+{
+    BYTE *sys = *(BYTE **)(b + BANK_SYSTEM);
+    DWORD **node = sys ? *(DWORD ***)(sys + SYS_TARGETS) : NULL;
+    int guard = 0;
+    *(DWORD *)(b + BANK_TARGET) = target;
+    memset(b + BANK_TARGET + 4, 0, 12);
+    while (node && guard++ < 64) {
+        DWORD *e = node[0];
+        if (e && e[0] == target) {
+            memcpy(b + BANK_TARGET + 4, e + 1, 12);
+            return;
+        }
+        node = (DWORD **)node[1];
+    }
+}
 
 static void ensure_charge(BYTE *b)
 {
@@ -158,10 +216,8 @@ static void enforce_remote(void)
                        (g_cfg.phaserSync >= 3 || t >= g_remote[s].retry[i])) {
                 float dt = g_dt;
                 g_remote[s].retry[i] = t + 0.1;
-                if (*(DWORD *)(b + BANK_TARGET) != g_remote[s].target) {
-                    *(DWORD *)(b + BANK_TARGET) = g_remote[s].target;
-                    memset(b + BANK_TARGET + 4, 0, 12); /* offset on the target: its centre */
-                }
+                if (*(DWORD *)(b + BANK_TARGET) != g_remote[s].target)
+                    aim_at(b, g_remote[s].target);
                 if (hk_Fire(b, 0, *(int *)&dt, 1))
                     g_started++;
             } else if (want && b[BANK_FIRING] && g_cfg.phaserSync >= 3 && g_remote[s].fed[i] + 1 < g_frame) {
@@ -171,6 +227,8 @@ static void enforce_remote(void)
                 hk_Fire(b, 0, *(int *)&dt, 1);
                 g_driven++;
             }
+            if (b[BANK_FIRING] && g_cfg.testMode)
+                diag_beam(s, i, ship, b);
             if (b[BANK_FIRING])
                 g_remote[s].firing |= 1u << i;
             else
@@ -288,7 +346,7 @@ void phaser_set_owned(const DWORD *ids, int n)
 static int report_ship(int k, BYTE *ship)
 {
     BYTE *sys = *(BYTE **)(ship + SHIP_PHASERS), **arr;
-    DWORD bits = 0, id = *(DWORD *)(ship + 4), target = 0, hits = 0, on = 0;
+    DWORD bits = 0, id = *(DWORD *)(ship + 4), target = 0, hits = 0, on = 0, other = 0;
     int n, i;
     if (!sys)
         return 0;
@@ -304,7 +362,13 @@ static int report_ship(int k, BYTE *ship)
             }
             if (!target)
                 target = *(DWORD *)(arr[i] + BANK_TARGET);
+            else if (g_cfg.testMode && *(DWORD *)(arr[i] + BANK_TARGET) != target)
+                other |= 1u << i; /* test telemetry: a firing bank on another target */
         }
+    if (g_cfg.testMode && (other != g_own[k].other || (other && target != g_own[k].target))) {
+        tlog_printf("PM %ld %lu %lu %lu %lu", tlog_ms(), id, bits, other, target);
+        g_own[k].other = other;
+    }
     if (id == g_own[k].ship && bits == g_own[k].bits && hits == g_own[k].hits && on == g_own[k].on)
         return 0;
     if (id != g_own[k].ship)
@@ -384,6 +448,23 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2)
             }
             /* the owner fires it: our copy's charge must not stop it */
             ensure_charge(b);
+            /* ... and it aims where the owner's bank aims (issue #30). Each weapon system picks
+             * its banks' targets itself: when Fire fails for the current target (out of the
+             * bank's arc or range), it goes on with the next target in its list (0x00584E40)
+             * without stopping the bank. Our copy passes the arc test (forced, hk_Arc), so it
+             * kept the old target while the owner's bank had switched: the owner's beam hit one
+             * ship and ours another or nothing. The point on the target comes with it (aim_at). */
+            if (g_remote[slot].target && *(DWORD *)(b + BANK_TARGET) != g_remote[slot].target) {
+                if (g_cfg.testMode && g_diagWrongTgt[slot][idx] != *(DWORD *)(b + BANK_TARGET)) {
+                    g_diagWrongTgt[slot][idx] = *(DWORD *)(b + BANK_TARGET);
+                    tlog_printf("PG %ld %lu %d %lu %lu %d", tlog_ms(), *(DWORD *)(ship + 4), idx,
+                                *(DWORD *)(b + BANK_TARGET), g_remote[slot].target, b[BANK_FIRING]);
+                }
+                if (g_cfg.phaserOwnerTarget && g_cfg.phaserSync >= 3) {
+                    aim_at(b, g_remote[slot].target);
+                    g_retargeted++;
+                }
+            }
             g_remote[slot].fed[idx] = g_frame;
             if (g_cfg.phaserSync < 3)
                 return ((PFN_Fire)ADDR_FIRE)(bank, 0, a1, a2);

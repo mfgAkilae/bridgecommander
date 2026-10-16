@@ -58,6 +58,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | A beam the shooter hit is shown on the other screens | 84–87 % | 99.6–100 % | v1.6–v1.7 |
 | Beam starts on the other screens after the shooter's | 0.27 s | 0.06–0.08 s | v1.7.0 (#23) |
 | AI ships: beams shown / same banks firing | 91.7 % / 70.1 % | 100 % / 99.4 % | v1.7.3 (#28) |
+| Another screen keeps firing at the previous target (AI beams missing) | 0.46 % | 0.02 % | main (#30) |
 
 **Network, joining, stability**
 
@@ -257,9 +258,12 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, such as AI ships of
   mods or the starbase of the starbase mission (tested only with AI ships the test pilot creates).
   Before, every computer decided their firing itself: in a test with five AI ships 8.3 % of their
-  beams were missing on another screen, now none (#28).
-  At the edge of the phaser range (162–175 units in one test) a beam can hit on the host and show no
-  hits on the other screens, which still show the beam (#30).
+  beams were missing on another screen, now none (#28). Since #30 (in `main`, not yet released) a
+  remote bank also aims where its owner's bank aims: before, the other screens could keep firing
+  at the previous target (missing AI beams 0.46 % → 0.02 %).
+- The starbase mission (Mission 5) was tested with six players: positions and phasers (also the
+  starbase's) are in sync, but torpedoes that pass close to the starbase hit it on some computers
+  only (154–170 of 170–183 hits seen by all, #31).
 - Since v1.7.3 a ship that appears on a screen (a player joins or respawns, an AI ship is created)
   starts at the first position received for it. Before, it started at the position of its "object
   created" message, which can be seconds old, and slid into place for up to a second (#29).
@@ -285,8 +289,8 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   - `mptest.py` – starts host and client with a test configuration (inside Windows Sandbox only).
   - `sbx_agent.py`, `sbx_runner.py`, `sbx_job.py` – job queue between host and sandbox.
   - `analyze.py` – position error, torpedo hit matching.
-  - `combat.py`, `phasers.py`, `banks.py`, `torpstats.py`, `mixed.py`, `spawn.py` – hull, phaser and torpedo
-    sync, mixed versions, where newly appearing ships show up.
+  - `combat.py`, `phasers.py`, `banks.py`, `torpstats.py`, `mixed.py`, `spawn.py`, `rangetest.py` – hull,
+    phaser and torpedo sync, mixed versions, where newly appearing ships show up, phaser range tests.
   - `game_scripts/` – `Local.py` and `bcmptest.py`, the scripted pilot (copy into the game's `scripts` folder for tests).
   - `sandbox/` – Windows Sandbox configuration and dgVoodoo2 settings.
   - `ghidra/`, `asm.cmd`, `fn.py`, `gen_names.py` – Ghidra scripts and helpers.

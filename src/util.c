@@ -92,6 +92,7 @@ void config_load(void)
     g_cfg.pythonRedirect = ini_int(ini, "Test", "PythonRedirect", 1);
     g_cfg.pythonTickDelay = ini_int(ini, "Test", "PythonTickDelayMs", 6000) / 1000.0;
     g_cfg.statsIntervalSec = ini_int(ini, "Debug", "NetStatsSec", 0);
+    g_cfg.phaserOwnerTarget = ini_int(ini, "Test", "PhaserOwnerTarget", 1);
     g_cfg.traceSec = ini_int(ini, "Debug", "TraceStateSec", ini_int(ini, "Test", "TraceStateSec", 0));
     g_cfg.verbose = ini_int(ini, "Debug", "Verbose", 0);
 

@@ -21,6 +21,11 @@ g_bDedicated = 0
 g_iMaxPlayers = 0
 g_iAIShips = 0
 g_sTarget = 'nearest'
+g_iMission = 1
+g_iTeam = 0
+g_lRange = []
+g_bSwitch = 0
+g_bTeamSent = 0
 
 def Env(sKey, sDefault):
 	import bcmpdll
@@ -31,7 +36,7 @@ def Env(sKey, sDefault):
 
 def InitEnv():
 	global g_fStart, g_bInit, g_sRole, g_sName, g_sJoin, g_iSpecies, g_iSystem, g_sAI, g_fLogEvery, g_fQuitAfter
-	global g_bDedicated, g_iMaxPlayers, g_iAIShips, g_sTarget
+	global g_bDedicated, g_iMaxPlayers, g_iAIShips, g_sTarget, g_iMission, g_iTeam, g_lRange, g_bSwitch
 	g_bInit = 1
 	g_fStart = Now()
 	g_sRole = Env('BCMP_ROLE', '')
@@ -50,6 +55,18 @@ def InitEnv():
 	# instance logs them. BCMP_TARGET=ai: the pilot only attacks AI ships.
 	g_iAIShips = string.atoi(Env('BCMP_AI_SHIPS', '0'))
 	g_sTarget = Env('BCMP_TARGET', 'nearest')
+	# BCMP_MISSION=5: Defend the Starbase; BCMP_TEAM: 0 = attackers, 1 = defenders. With
+	# BCMP_TARGET=team the pilot attacks only the other team (attackers: the starbase first).
+	g_iMission = string.atoi(Env('BCMP_MISSION', '1'))
+	g_iTeam = string.atoi(Env('BCMP_TEAM', '0'))
+	# BCMP_RANGE=d1,d2,...: range test. The host's ship stands still and fires its phasers at a
+	# stationary target ship (RT) that it moves to each distance in turn (15 s each); the
+	# clients only watch.
+	g_lRange = map(string.atof, filter(None, string.split(Env('BCMP_RANGE', ''), ',')))
+	# BCMP_SWITCH=1: target switch test. The host's ship stands still and keeps firing at two
+	# stationary ships (RT1, RT2) that it moves in turn behind it every 12 s, so its banks switch
+	# from one target to the other without stopping; the clients only watch.
+	g_bSwitch = Env('BCMP_SWITCH', '0') == '1'
 	global g_iSeed
 	if g_sRole == 'host':
 		g_iSeed = string.atoi(Env('BCMP_SEED', '12345'))
@@ -64,6 +81,13 @@ g_pLog = None
 g_bHandlers = 0
 g_iAIShipID = 0
 g_fStart = 0
+
+def MissionModule(sSuffix):
+	# Multiplayer.Episode.MissionN.MissionN<suffix> of the mission under test
+	sName = 'Multiplayer.Episode.Mission%d.Mission%d%s' % (g_iMission, g_iMission, sSuffix)
+	exec 'import ' + sName
+	import sys
+	return sys.modules[sName]
 
 def Now():
 	import bcmpdll
@@ -138,7 +162,14 @@ def StartNetwork(pTop):
 	pMultWindow = App.MultiplayerWindow_Cast(pTop.FindMainWindow(App.MWT_MULTIPLAYER))
 	App.g_kUtopiaModule.SetMultiplayer(1)
 	if g_sRole == 'host':
-		App.g_kVarManager.SetStringVariable('Multiplayer', 'Mission', 'Multiplayer.Episode.Mission1.Mission1')
+		App.g_kVarManager.SetStringVariable('Multiplayer', 'Mission', 'Multiplayer.Episode.Mission%d.Mission%d' % (g_iMission, g_iMission))
+		if g_iMission != 1:
+			# what clicking the game type in the host menu does (the window keeps its own choice)
+			pMission = App.TGStringEvent_Create()
+			pMission.SetEventType(App.ET_SET_MISSION_NAME)
+			pMission.SetString('Mission%d' % g_iMission)
+			pMission.SetDestination(pMultWindow)
+			App.g_kEventManager.AddEvent(pMission)
 		App.g_kUtopiaModule.SetIsHost(1)
 		App.g_kUtopiaModule.SetIsClient(1)
 		pMultWindow.SetDirectJoin(0)
@@ -170,6 +201,13 @@ def TryStartMission():
 		return
 	if InState() < 2.0:
 		return
+	if g_iMission == 5:
+		# wait until the game has loaded the mission and run Mission5.Initialize (it creates the
+		# starbase's attacker group); importing it here first would load it outside the game
+		import sys
+		pMod = sys.modules.get('Multiplayer.Episode.Mission5.Mission5')
+		if pMod is None or pMod.g_pAttackerGroup is None:
+			return
 	if g_sRole == 'host':
 		pMMS.SelectSystem(g_iSystem)
 		if g_iMaxPlayers > 0:
@@ -181,8 +219,7 @@ def TryStartMission():
 		if g_bDedicated:
 			# a dedicated server starts the game without a ship (StartMission skips UNKNOWN)
 			import Multiplayer.SpeciesToShip
-			import Multiplayer.Episode.Mission1.Mission1Menus
-			Multiplayer.Episode.Mission1.Mission1Menus.StartMission(Multiplayer.SpeciesToShip.UNKNOWN, pMMS.g_iSystem)
+			MissionModule('Menus').StartMission(Multiplayer.SpeciesToShip.UNKNOWN, pMMS.g_iSystem)
 			Log('X DEDICATED %d system=%d client=%d' % (Now(), pMMS.g_iSystem, App.g_kUtopiaModule.IsClient()))
 			SetState('ingame')
 			return
@@ -193,16 +230,43 @@ def TryStartMission():
 	SpawnShip()
 	SetState('ingame')
 
+def SendTeam():
+	# Mission 5: what the mission's FinishedSelectHandler does with the team button
+	global g_bTeamSent
+	if g_iMission != 5:
+		return
+	pMenus = MissionModule('Menus')
+	pMission = MissionModule('')
+	pMenus.g_iTeam = g_iTeam
+	pNet = App.g_kUtopiaModule.GetNetwork()
+	if not pNet:
+		return
+	if App.g_kUtopiaModule.IsHost():
+		pMission.g_kTeamDictionary[pNet.GetLocalID()] = g_iTeam
+	elif not g_bTeamSent:
+		pMessage = App.TGMessage_Create()
+		pMessage.SetGuaranteed(1)
+		kStream = App.TGBufferStream()
+		kStream.OpenBuffer(256)
+		kStream.WriteChar(chr(pMission.TEAM_MESSAGE))
+		kStream.WriteLong(pNet.GetLocalID())
+		kStream.WriteChar(chr(g_iTeam))
+		pMessage.SetDataFromStream(kStream)
+		pNet.SendTGMessage(pNet.GetHostID(), pMessage)
+		kStream.CloseBuffer()
+	g_bTeamSent = 1
+	Log('X TEAM %d %d' % (Now(), g_iTeam))
+
 def SpawnShip():
 	import Multiplayer.MissionMenusShared
-	import Multiplayer.Episode.Mission1.Mission1Menus
 	pTop = App.TopWindow_GetTopWindow()
 	pMultWindow = App.MultiplayerWindow_Cast(pTop.FindMainWindow(App.MWT_MULTIPLAYER))
 	pMissionPane = pMultWindow.GetMissionPane()
 	if pMissionPane:
 		pMissionPane.SetNotVisible()
 	pMMS = Multiplayer.MissionMenusShared
-	Multiplayer.Episode.Mission1.Mission1Menus.StartMission(pMMS.g_iSpecies, pMMS.g_iSystem)
+	SendTeam()
+	MissionModule('Menus').StartMission(pMMS.g_iSpecies, pMMS.g_iSystem)
 	Log('X SPAWN %d species=%d system=%d' % (Now(), pMMS.g_iSpecies, pMMS.g_iSystem))
 
 def GetShips():
@@ -221,7 +285,42 @@ def GetShips():
 		i = i + 1
 	for pShip in GetAIShips():
 		lShips.append((-1, pShip))
+	pStarbase = GetStarbase()
+	if pStarbase:
+		lShips.append((-1, pStarbase))
 	return lShips
+
+def GetStarbase():
+	# Mission 5: the starbase the host creates (logged and attacked like an AI ship)
+	if g_iMission != 5:
+		return None
+	import Multiplayer.MissionShared
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if App.IsNull(pSet) or not Multiplayer.MissionShared.g_pDatabase:
+		return None
+	pShip = None
+	if App.g_kUtopiaModule.IsHost():
+		pShip = MissionModule('').g_pStarbase
+	if not pShip:
+		pShip = App.ShipClass_GetObject(pSet, Multiplayer.MissionShared.g_pDatabase.GetString('Starbase').GetCString())
+	if pShip and not pShip.IsDead():
+		global g_bStarbaseLogged
+		if not g_bStarbaseLogged:
+			g_bStarbaseLogged = 1
+			Log('X STARBASE %d %s %d' % (Now(), pShip.GetName(), pShip.GetObjID()))
+		return pShip
+	return None
+
+g_bStarbaseLogged = 0
+
+def TeamOf(iID):
+	# Mission 5: the team of a player (-1: unknown); the host passes each player's team on
+	if g_iMission != 5 or iID == -1:
+		return -1
+	pMission = MissionModule('')
+	if pMission.g_kTeamDictionary.has_key(iID):
+		return pMission.g_kTeamDictionary[iID]
+	return -1
 
 def GetAIShips():
 	# the AI ships (AI1..AIn) in the starting set
@@ -322,6 +421,15 @@ def FindEnemy(pPlayer):
 			continue
 		if g_sTarget == 'ai' and iID != -1:
 			continue
+		if g_sTarget == 'team':
+			if iID == -1 and g_iTeam == 1:
+				continue  # defenders do not attack the starbase
+			if iID != -1 and TeamOf(iID) == g_iTeam:
+				continue
+			if iID == -1 and g_iTeam == 0 and pShip.GetObjID() != g_iTargetID:
+				# attackers go for the starbase
+				g_iTargetUntil = t + 20000
+				return pShip
 		if pShip.GetObjID() == g_iTargetID:
 			pCur = pShip
 		kE = pShip.GetWorldLocation()
@@ -407,7 +515,9 @@ def InGame():
 			SetState('ingame')
 		return
 	else:
-		if g_sAI == 'attack':
+		if RangeTest(pPlayer) or SwitchTest(pPlayer):
+			pass
+		elif g_sAI == 'attack':
 			Pilot(pPlayer)
 		if InState() > 5.0:
 			TestInfoPaneGuard()
@@ -624,6 +734,121 @@ def DamageEnginesOnce(pPlayer):
 		Log('X DAMAGE %d impulse %.2f' % (Now(), fFrac))
 
 g_fKickNext = -2.0
+
+g_fRangeNext = 0.0
+g_iRangeStep = -1
+
+def RangeTest(pPlayer):
+	# BCMP_RANGE (see InitEnv); returns 1 when it drives the ship
+	global g_fRangeNext, g_iRangeStep, g_iNextVolley
+	if not g_lRange:
+		return 0
+	pPlayer.SetImpulse(0.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+	if g_sRole != 'host' or InState() < 20.0:
+		return 1
+	import Multiplayer.MissionShared
+	import loadspacehelper
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if App.IsNull(pSet):
+		return 1
+	pTarget = App.ShipClass_GetObject(pSet, 'RT')
+	if not pTarget:
+		pTarget = loadspacehelper.CreateShip('Galor', pSet, 'RT', '')
+		if not pTarget:
+			return 1
+		Log('X RTSHIP %d' % Now())
+	t = Now()
+	kP = pPlayer.GetWorldLocation()
+	kF = pPlayer.GetWorldForwardTG()
+	if t >= g_fRangeNext:
+		g_iRangeStep = g_iRangeStep + 1
+		g_fRangeNext = t + 15000
+		if g_iRangeStep >= len(g_lRange):
+			g_iRangeStep = 0
+		d = g_lRange[g_iRangeStep]
+		kT = MakePoint(kP.GetX() + kF.GetX() * d, kP.GetY() + kF.GetY() * d, kP.GetZ() + kF.GetZ() * d)
+		pTarget.SetTranslate(kT)
+		pTarget.SetVelocity(MakePoint(0.0, 0.0, 0.0))
+		pTarget.UpdateNodeOnly()
+		pSet.GetProximityManager().UpdateObject(pTarget)
+		Log('X RANGE %d %.1f' % (t, d))
+	pHull = pTarget.GetHull()
+	if pHull:
+		pHull.SetCondition(pHull.GetMaxCondition())
+	pTarget.SetImpulse(0.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+	pPlayer.TurnTowardLocation(pTarget.GetWorldLocation())
+	if pPlayer.GetTarget() is None or pPlayer.GetTarget().GetObjID() != pTarget.GetObjID():
+		pPlayer.SetAlertLevel(App.ShipClass.RED_ALERT)
+		pPlayer.SetTarget('RT')
+	pSystem = pPlayer.GetWeaponSystemGroup(App.ShipClass.WG_PRIMARY)
+	if pSystem and t >= g_iNextVolley:
+		g_iNextVolley = t + 3000
+		pSystem.StartFiring(pPlayer.GetTarget(), pPlayer.GetTargetOffsetTG())
+		pSystem.SetForceUpdate(1)
+	return 1
+
+g_fSwitchNext = 0.0
+g_iSwitchStep = -1
+
+def SwitchTest(pPlayer):
+	# BCMP_SWITCH (see InitEnv); returns 1 when it drives the ship
+	global g_fSwitchNext, g_iSwitchStep
+	if not g_bSwitch:
+		return 0
+	pPlayer.SetImpulse(0.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+	if g_sRole != 'host' or InState() < 20.0:
+		return 1
+	import Multiplayer.MissionShared
+	import loadspacehelper
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if App.IsNull(pSet):
+		return 1
+	lTargets = []
+	for sName in ('RT1', 'RT2'):
+		pT = App.ShipClass_GetObject(pSet, sName)
+		if not pT:
+			pT = loadspacehelper.CreateShip('Galor', pSet, sName, '')
+			if not pT:
+				return 1
+			Log('X RTSHIP %d %s' % (Now(), sName))
+		lTargets.append(pT)
+	t = Now()
+	kP = pPlayer.GetWorldLocation()
+	kF = pPlayer.GetWorldForwardTG()
+	kR = pPlayer.GetWorldRightTG()
+	if t >= g_fSwitchNext:
+		g_iSwitchStep = g_iSwitchStep + 1
+		g_fSwitchNext = t + 12000
+		# the active target 90 units ahead (a little to the side), the other 90 units behind
+		iActive = g_iSwitchStep % 2
+		for i in (0, 1):
+			pT = lTargets[i]
+			if i == iActive:
+				f, s = 90.0, 15.0 * (1 - 2 * i)
+			else:
+				f, s = -90.0, 15.0 * (1 - 2 * i)
+			kT = MakePoint(kP.GetX() + kF.GetX() * f + kR.GetX() * s, kP.GetY() + kF.GetY() * f + kR.GetY() * s,
+				kP.GetZ() + kF.GetZ() * f + kR.GetZ() * s)
+			pT.SetTranslate(kT)
+			pT.SetVelocity(MakePoint(0.0, 0.0, 0.0))
+			pT.UpdateNodeOnly()
+			pSet.GetProximityManager().UpdateObject(pT)
+		Log('X SWITCH %d %s' % (t, lTargets[iActive].GetName()))
+		pSystem = pPlayer.GetWeaponSystemGroup(App.ShipClass.WG_PRIMARY)
+		if pSystem:
+			# both ships in the weapon system's target list; the banks keep firing
+			pPlayer.SetAlertLevel(App.ShipClass.RED_ALERT)
+			pPlayer.SetTarget(lTargets[1 - iActive].GetName())
+			pSystem.StartFiring(pPlayer.GetTarget(), pPlayer.GetTargetOffsetTG())
+			pPlayer.SetTarget(lTargets[iActive].GetName())
+			pSystem.StartFiring(pPlayer.GetTarget(), pPlayer.GetTargetOffsetTG())
+			pSystem.SetForceUpdate(1)
+	for pT in lTargets:
+		pHull = pT.GetHull()
+		if pHull:
+			pHull.SetCondition(pHull.GetMaxCondition())
+		pT.SetImpulse(0.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+	return 1
 
 def KickShip(pPlayer):
 	# BCMP_KICK_AT=<s>, BCMP_KICK=<speed>, BCMP_KICK_EVERY=<s>: every player adds a

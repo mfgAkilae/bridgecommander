@@ -118,6 +118,14 @@ def run_job(path, status):
         args += ['--ai-ships', str(job['ai_ships'])]
     if job.get('target') and job['target'] != 'nearest':
         args += ['--target', job['target']]
+    if job.get('mission', 1) != 1:
+        args += ['--mission', str(job['mission'])]
+    if job.get('teams'):
+        args += ['--teams', job['teams']]
+    if job.get('range'):
+        args += ['--range', job['range']]
+    if job.get('switch'):
+        args.append('--switch')
     if job.get('raise_once'):
         args.append('--raise-once')
     if job.get('test_infopane'):
