@@ -15,6 +15,13 @@ No game files are included. You need your own copy of the game.
 
 ## What it improves
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/before-after-dark.png">
+  <img alt="Before and after: ship positions, torpedoes, phasers, network and stability" src="docs/img/before-after-light.png" width="780">
+</picture>
+
+The same values as text below; the page itself is [`docs/before-after.html`](docs/before-after.html).
+
 Measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per
 direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances
 are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.md`](docs/measurements.md).
