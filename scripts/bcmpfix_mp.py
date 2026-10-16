@@ -74,6 +74,7 @@ def Tick():
 
 def DoTick():
 	global g_iNextPing, g_iNextLead, g_iNextStats
+	PatchConditionInRange()
 	if not App.g_kUtopiaModule.IsMultiplayer():
 		return
 	GuardInfoPane()
@@ -241,6 +242,63 @@ def ReceiveDirect(pMessage):
 	pNet = App.g_kUtopiaModule.GetNetwork()
 	if pNet and not App.g_kUtopiaModule.IsHost() and pMessage.GetFromID() == pNet.GetHostID():
 		g_iDirectHost = pMessage.GetFromID()
+
+# ---- Conditions.ConditionInRange (issue #27) ---------------------------------------
+# The original SetObjects registers the condition's group handlers every time it runs, and
+# GroupChanged runs it whenever the group changes. So every change of the group adds one more
+# GroupChanged handler, and the next change runs all of them: their number doubles. Dynamic
+# music watches the enemy group with such a condition; with ten players the first player had
+# 100000 handlers, and every deleted object then scanned them all (seconds per frame).
+# Here the handlers of a group are registered once per condition.
+g_bConditionPatched = 0
+
+def PatchConditionInRange():
+	global g_bConditionPatched
+	if g_bConditionPatched:
+		return
+	g_bConditionPatched = 1
+	if Cfg('FixConditionInRange') <= 0:
+		return
+	try:
+		import Conditions.ConditionInRange
+		Conditions.ConditionInRange.ConditionInRange.SetObjects = ConditionInRange_SetObjects
+		DllLog('bcmpfix_mp: ConditionInRange registers its group handlers once')
+	except:
+		import sys
+		LogError('PatchConditionInRange', sys.exc_type, sys.exc_value)
+
+def GroupKey(pGroup):
+	# the C++ object behind a SWIG shadow (several shadows can wrap one group)
+	return getattr(pGroup, 'this', None)
+
+def ConditionInRange_SetObjects(self, sObject1, *lsObjectNames):
+	pObjects = App.ObjectGroup_ForceToGroup(lsObjectNames)
+	sKey = GroupKey(pObjects)
+	bSameGroup = sKey is not None and self.__dict__.get('bcmp_sGroupKey') == sKey
+	bSameObject = bSameGroup and self.__dict__.get('sObject1') == sObject1
+	self.sObject1 = sObject1
+	self.pObjects = pObjects
+	if not bSameObject:
+		self.pSingleObjectGroup = App.ObjectGroup()
+		self.pSingleObjectGroup.AddName(self.sObject1)
+	self.iNumInside = 0
+	self.lsInsideObjects = []
+	self.pCodeCondition.SetStatus(0)
+	pEvents = App.g_kEventManager
+	if not bSameGroup:
+		self.pObjects.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+		pEvents.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET, self.pEventHandler, 'EnteredSet', self.pObjects)
+		self.pObjects.SetEventFlag(App.ObjectGroup.EXITED_SET)
+		pEvents.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_OBJECT_EXITED_SET, self.pEventHandler, 'ExitedSet', self.pObjects)
+		self.pObjects.SetEventFlag(App.ObjectGroup.GROUP_CHANGED)
+		pEvents.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_CHANGED, self.pEventHandler, 'GroupChanged', self.pObjects)
+		self.bcmp_sGroupKey = sKey
+	if not bSameObject:
+		self.pSingleObjectGroup.SetEventFlag(App.ObjectGroup.ENTERED_SET)
+		pEvents.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_OBJECT_ENTERED_SET, self.pEventHandler, 'EnteredSet', self.pSingleObjectGroup)
+		self.pSingleObjectGroup.SetEventFlag(App.ObjectGroup.EXITED_SET)
+		pEvents.AddBroadcastPythonMethodHandler(App.ET_OBJECT_GROUP_OBJECT_EXITED_SET, self.pEventHandler, 'ExitedSet', self.pSingleObjectGroup)
+	self.SetupProximitySphere()
 
 def string_split(s):
 	import string

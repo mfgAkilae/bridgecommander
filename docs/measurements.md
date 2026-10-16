@@ -884,3 +884,59 @@ per 5 s, against 50–60 normally). A watchdog of the test build (no frame for 2
 found it busy in the game's code, not in a driver. The sandbox renders on the RTX 3080 Ti (DXGI
 adapter 1 in the sandbox; 64–66 % 3D load with eleven instances), and 13 GB of 16 GB stayed free
 (the sandbox had 8 GB before; the runs from the stall checks on use 16 GB).
+
+## Issue #27: stalls with ten clients (v1.7.2)
+
+The test build's watchdog (test mode: when no frame starts for 2 s, a thread samples the main thread;
+`tools/stackdecode.py` keeps the stack values that are return addresses) found the stalled first
+client deleting an object: main loop → event dispatch → 0x005A5800 → destructors 0x004350E0,
+0x00430A90 → 0x006D9060 (event receiver) → 0x006DB590 → loop in 0x006E20B0, a pass over every
+registered event handler. A counter of the handler registry (test mode, every 10 s) then showed the
+first client's registry growing to 98667 handlers in three minutes, while the server had 280 and the
+other clients 300–800; between two readings its 32839 handler removals took 11 s. At 6499 handlers
+the largest event type, ET_OBJECT_GROUP_CHANGED, held 2052 of them, all the same Python method
+(`GroupChanged`) of one receiver for the same group; with the ENTERED_SET and EXITED_SET handlers that
+the same call registers, that is 3 × 2052 plus the about 350 handlers of a normal client. The
+condition is `ConditionInRange`, which the combat music uses for the enemy group (see findings). With `FixConditionInRange` the first client kept 229–397 handlers.
+
+Dedicated server with ten clients, 180 s, 60 ms ±20 ms, 1 % loss, three runs each, alternating:
+
+| | v1.7.1 | v1.7.2 candidate (fix) |
+|---|---|---|
+| first client: lowest frame rate per 5 s | 3.3, 57.9, 51.8 | 50.8, 59.8, 57.4 |
+| first client: longest gap between frames | 37 s, 0.2 s, 0.3 s | 0.15 s, 0.15 s, 0.16 s |
+| clients see clients (mean / 95th), jumps | 0.26 / 0.47, 211; 0.12 / 0.26, 0; 0.14 / 0.30, 0 | 0.12 / 0.26, 0; 0.10 / 0.22, 0; 0.12 / 0.27, 0 |
+| torpedo hits on the host seen by all ten clients | 60 of 88, 106 of 106, 147 of 150 | 159 of 160, 163 of 165, 118 of 123 |
+| phaser beams also shown by the other peers | 96.1 %, 99.5 %, 100 % | 100 %, 99.8 %, 99.4 % |
+
+Before the fix, 4 of 10 dedicated runs with the v1.7.1 code and 4 of 9 with v1.7.0 had such a stall
+(under 20 frames per 5 s). The bursts of position jumps in the earlier ten-client runs (one instance
+sees all ships jump at once) were the same stalls on a smaller scale: all four runs with the fix
+had none.
+
+## v1.7.2 release check
+
+Exact release build, default settings (`FixConditionInRange=1`). Mean / 95th percentile, backward
+steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.13, 0.0 % | 0.04 / 0.09, 0.1 % | – | 9 of 9 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.20, 0.0 % | 0.07 / 0.15, 0.0 % | – | 5 of 5 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.10, 0.0 % | 0.04 / 0.08, 0.2 % | 0.06 / 0.14, 0.2 % | 82 of 83 |
+| 6 players, 60 ms (second run) | 0.06 / 0.10, 0.0 % | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 45 of 45 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.11, 0.0 % | 0.04 / 0.09, 0.0 % | 0.06 / 0.13, 0.0 % | 85 of 85 |
+| dedicated server + 10 clients (run 1) | – | 0.13 / 0.37, 0.0 % | 0.16 / 0.44, 0.2 % | 171 of 173 |
+| dedicated server + 10 clients (run 2, PC busy) | – | 0.24 / 0.45, 0.0 % | 0.27 / 0.55, 0.4 % | 112 of 115 |
+
+The second dedicated run and the mixed game overlapped with other load on the PC (other game
+processes): the instances ran at a median 20 (dedicated) and 39 (mixed) frames per second instead of
+about 65 and 115, which raised the position errors. No stall in either dedicated run (first client:
+longest gap 0.19–0.21 s, about 370 handlers at the end, no watchdog sample). Phasers: beams shown by
+the other peers 99.8–100 % (six players), 99.4–99.8 % (dedicated). Mixed game (v1.7.2 host; v1.7.1,
+v1.7.0 and two v1.7.2 clients; one original): among the v1.7.x players phasers 98.7–100 %, torpedo hits
+97.8–100 %, positions 0.09–0.14. Torpedo hits: client − host −66, −63, −66 ms (median). Kick test:
+the first run's ships drifted apart (mean distance 1067, up to 2278 units at the end, against about
+150 normally), so they got fewer updates: peak error median 3.6, 90th percentile 12.2, max 58.9; two
+repeats: median 3.3–3.4, max 5.1–5.2. Join test: every client saw every ship. Installer update from
+v1.7.1 tested. No crashes, no script errors.

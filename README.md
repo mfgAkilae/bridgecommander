@@ -169,7 +169,9 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   within 0.1–0.2 units (original: 6.2), and 94–100 % of the torpedo hits were seen by all clients
   (original: 51 %); the host's upload was about 87 kB/s. On a dedicated server the first client's
   ships could collide with the server's own object IDs and then stay invisible for everyone (a bug of
-  the original game, fixed in v1.7.1, #24).
+  the original game, fixed in v1.7.1, #24). In big games the player who joined first froze for
+  seconds, up to a minute: the combat music's range condition doubled its event handlers with every
+  join, death and respawn (a bug of the original game, fixed in v1.7.2, #27).
 - Mixed games (#26, six players with v1.7.0, v1.6.0 and the original game): no errors in any
   combination. Positions and torpedo reports work across bcmpfix versions if the host runs bcmpfix;
   players without the mod keep the original errors. Phasers are synchronised only among players with

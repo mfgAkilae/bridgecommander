@@ -357,6 +357,8 @@ static PyObject *__cdecl m_config(PyObject *self, PyObject *args)
         v = g_cfg.torpedoLead;
     else if (!lstrcmpiA(k, "DirectPhaserReports"))
         v = direct_enabled();
+    else if (!lstrcmpiA(k, "FixConditionInRange"))
+        v = g_cfg.fixConditionInRange;
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(v);
 }
 

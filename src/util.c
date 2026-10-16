@@ -60,6 +60,7 @@ void config_load(void)
     g_cfg.noScriptConsole = ini_int(ini, "Fixes", "NoScriptErrorConsole", 1);
     g_cfg.fixGhostShip = ini_int(ini, "Fixes", "FixGhostShip", 1);
     g_cfg.fixDedicatedIds = ini_int(ini, "Fixes", "FixDedicatedObjectIds", 1);
+    g_cfg.fixConditionInRange = ini_int(ini, "Fixes", "FixConditionInRange", 1);
     g_cfg.torpedoLead = ini_int(ini, "Fixes", "TorpedoLatencyCompensation", 1);
     g_cfg.predictHits = ini_int(ini, "Fixes", "PredictTorpedoHits", 1);
     /* PhaserHitAuthority is mode 3 of the phaser sync; the experimental modes 1 and 2 of v1.5.0

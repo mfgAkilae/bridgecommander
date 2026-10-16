@@ -316,9 +316,170 @@ static PFN_ThisVoid o_FrameTimer;
 static double g_lastFrame, g_nextTick;
 static char g_tickCode[256];
 
+/* Test mode: a watchdog thread samples the main thread when no frame has started for 2 s
+ * (instruction pointer and return-address candidates on its stack), to tell where the game
+ * stalls. The thread is suspended only while its context and stack are copied; the log is
+ * written after it runs again (it may hold the log's or the CRT's locks). */
+static volatile double g_wdFrame;
+static HANDLE g_wdMain;
+
+static void wd_sample(double stalled)
+{
+    CONTEXT c;
+    DWORD stack[256], cand[24];
+    MEMORY_BASIC_INFORMATION mbi;
+    int n = 0, i, words = 0;
+    char buf[400], mod[64] = "?";
+    HMODULE hm = NULL;
+    memset(&c, 0, sizeof(c));
+    c.ContextFlags = CONTEXT_CONTROL | CONTEXT_INTEGER;
+    if (SuspendThread(g_wdMain) == (DWORD)-1)
+        return;
+    if (GetThreadContext(g_wdMain, &c) && VirtualQuery((void *)c.Esp, &mbi, sizeof(mbi)) && mbi.State == MEM_COMMIT) {
+        DWORD avail = (DWORD)((BYTE *)mbi.BaseAddress + mbi.RegionSize - (BYTE *)c.Esp) / 4;
+        words = avail < 256 ? (int)avail : 256;
+        memcpy(stack, (void *)c.Esp, words * 4);
+    }
+    ResumeThread(g_wdMain);
+    for (i = 0; i < words && n < 24; i++) {
+        HMODULE m = NULL;
+        if (stack[i] > 0x10000 && GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS |
+                                                         GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                                                     (LPCSTR)stack[i], &m) && m)
+            cand[n++] = stack[i];
+    }
+    if (GetModuleHandleExA(GET_MODULE_HANDLE_EX_FLAG_FROM_ADDRESS | GET_MODULE_HANDLE_EX_FLAG_UNCHANGED_REFCOUNT,
+                           (LPCSTR)c.Eip, &hm) && hm) {
+        char path[MAX_PATH];
+        const char *s;
+        if (GetModuleFileNameA(hm, path, sizeof(path))) {
+            s = strrchr(path, '\\');
+            lstrcpynA(mod, s ? s + 1 : path, sizeof(mod));
+        }
+    }
+    buf[0] = 0;
+    for (i = 0; i < n; i++)
+        _snprintf(buf + strlen(buf), sizeof(buf) - strlen(buf), " %08lx", cand[i]);
+    logf("WATCHDOG no frame for %.1f s: eip %08lx (%s) esp %08lx, stack:%s", stalled, c.Eip, mod, c.Esp, buf);
+}
+
+static DWORD WINAPI wd_thread(LPVOID p)
+{
+    double next = 0;
+    (void)p;
+    for (;;) {
+        double t, f;
+        Sleep(250);
+        t = now_sec();
+        f = g_wdFrame;
+        if (f > 0 && t - f > 2.0 && t >= next && g_wdMain) {
+            wd_sample(t - f);
+            next = t + 2.0; /* a sample every 2 s while it lasts */
+        }
+    }
+}
+
+/* Test mode, issue #27: the destructor of every event receiver (0x006D9060) removes its
+ * handlers by scanning the whole handler registry (0x0097F864, 0x006DB590). Count the calls,
+ * their time and the registry's size. */
+#define ADDR_CALL_REMOVEALL 0x006D90B9
+#define ADDR_REMOVEALL 0x006DB590
+#define ADDR_HANDLER_REGISTRY 0x0097F864
+typedef char(__fastcall *PFN_RemoveAll)(void *reg, void *edx, void *obj);
+static void *o_RemoveAll;
+static unsigned long g_raCalls;
+static double g_raTime, g_raMax, g_raNext;
+
+static char __fastcall hk_RemoveAll(void *reg, void *edx, void *obj)
+{
+    double t0 = now_sec(), dt;
+    char r = ((PFN_RemoveAll)o_RemoveAll)(reg, edx, obj);
+    dt = now_sec() - t0;
+    g_raCalls++;
+    g_raTime += dt;
+    if (dt > g_raMax)
+        g_raMax = dt;
+    return r;
+}
+
+static void registry_stats(void)
+{
+    BYTE *reg = (BYTE *)ADDR_HANDLER_REGISTRY, **bk;
+    DWORD nb, i;
+    unsigned long types = 0, h1 = 0, h2 = 0;
+    double t = now_sec();
+    if (t < g_raNext)
+        return;
+    g_raNext = t + 10.0;
+    nb = *(DWORD *)(reg + 8);
+    bk = *(BYTE ***)(reg + 0xC);
+    for (i = 0; bk && i < nb && i < 100000; i++) {
+        BYTE *node = bk[i];
+        int guard = 0;
+        while (node && guard++ < 100000) {
+            BYTE *val = *(BYTE **)(node + 4);
+            if (val) {
+                h1 += *(DWORD *)(val + 0xC);
+                h2 += *(DWORD *)(val + 0x24);
+            }
+            types++;
+            node = *(BYTE **)(node + 8);
+        }
+    }
+    logf("EVREG event types %lu, handlers %lu + %lu; handler removals %lu in %.0f ms (max %.1f ms)", types, h1, h2,
+         g_raCalls, g_raTime * 1000.0, g_raMax * 1000.0);
+    if (h1 > 2000) {
+        /* the event type with the most handlers, and its last few entries */
+        BYTE *top = NULL;
+        DWORD topKey = 0, topN = 0;
+        for (i = 0; bk && i < nb && i < 100000; i++) {
+            BYTE *node = bk[i];
+            int guard = 0;
+            while (node && guard++ < 100000) {
+                BYTE *val = *(BYTE **)(node + 4);
+                if (val && *(DWORD *)(val + 0xC) > topN) {
+                    topN = *(DWORD *)(val + 0xC);
+                    top = val;
+                    topKey = *(DWORD *)node;
+                }
+                node = *(BYTE **)(node + 8);
+            }
+        }
+        if (top) {
+            BYTE **arr = *(BYTE ***)(top + 4);
+            DWORD k;
+            logf("EVREG top event type 0x%lx: %lu handlers", topKey, topN);
+            for (k = topN > 6 ? topN - 6 : 0; k < topN; k++) {
+                BYTE *e = arr[k], *o = e ? *(BYTE **)e : NULL, *f = e ? *(BYTE **)(e + 4) : NULL;
+                logf("EVREG   entry %lu: obj %p vt %08lx, func %p vt %08lx f+8 %08lx f+c %08lx f+10 %08lx", k, o,
+                     o ? *(DWORD *)o : 0, f, f ? *(DWORD *)f : 0, f ? *(DWORD *)(f + 8) : 0, f ? *(DWORD *)(f + 0xC) : 0,
+                     f ? *(DWORD *)(f + 0x10) : 0);
+            }
+        }
+    }
+    g_raCalls = 0;
+    g_raTime = g_raMax = 0;
+}
+
+static void wd_frame(void)
+{
+    if (!g_wdMain) {
+        DuplicateHandle(GetCurrentProcess(), GetCurrentThread(), GetCurrentProcess(), &g_wdMain,
+                        THREAD_SUSPEND_RESUME | THREAD_GET_CONTEXT | THREAD_QUERY_INFORMATION, FALSE, 0);
+        CloseHandle(CreateThread(NULL, 0, wd_thread, NULL, 0, NULL));
+        logf("watchdog: samples the main thread when a frame takes longer than 2 s");
+        redirect_call(ADDR_CALL_REMOVEALL, (void *)hk_RemoveAll, &o_RemoveAll, ADDR_REMOVEALL,
+                      "diagnostics: event handler removal");
+    }
+    registry_stats();
+    g_wdFrame = now_sec();
+}
+
 static void __fastcall hk_FrameTimer(void *self, void *edx)
 {
     (void)edx;
+    if (g_cfg.testMode)
+        wd_frame();
     if (g_cfg.maxFps > 0) {
         double period = 1.0 / g_cfg.maxFps;
         double t = now_sec();
