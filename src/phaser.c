@@ -8,11 +8,11 @@
  * firings did not happen on a given other machine, and other machines fired banks the
  * shooter did not fire. The host applies the damage, so the shooter's hit did no damage.
  *
- * Here the owner of a ship reports which of its phaser banks fire, which of their beams'
- * rays are on an object (+0xFC) and which of these hit (beam state 3), sent by the script as
- * soon as that changes (and straight to every modded machine, direct.c). Every other
- * machine lets a bank of that ship fire only while its owner fires it; while it does, a
- * low local charge does not stop it.
+ * Here the owner of a ship (its player; for an AI ship the host, which simulates it) reports
+ * which of its phaser banks fire, which of their beams' rays are on an object (+0xFC) and
+ * which of these hit (beam state 3), sent by the script as soon as that changes (and straight
+ * to every modded machine, direct.c). Every other machine lets a bank of that ship fire only
+ * while its owner fires it; while it does, a low local charge does not stop it.
  *
  * Mode 3 (PhaserHitAuthority=1, default) also makes the beam follow the owner's: the bank
  * fires without the local arc test, the target list check (the list is rebuilt for each
@@ -66,6 +66,7 @@ static struct {
     DWORD seq;             /* sequence number of the last report applied (direct or relayed) */
     int hasSeq;
     double used;           /* last report or frame with the ship alive: a full table drops the oldest */
+    DWORD firing;          /* test telemetry: banks firing at the end of the last frame */
     double retry[32];      /* next start attempt per bank (a failed Fire is retried every 100 ms) */
     unsigned long fed[32]; /* frame of the last Fire call (the weapon system feeds firing banks) */
 } g_remote[MAXREMOTE];
@@ -81,10 +82,17 @@ static double g_lastFrameT;
 static float g_dt = 0.016f;
 static unsigned long g_forcedArc, g_skippedWait, g_driven, g_skippedStopHit;
 
-static DWORD g_ownShip, g_ownBits, g_ownTarget, g_ownHits, g_ownOn, g_ownSeq, g_sentShip, g_sentBits, g_sentHits,
-    g_sentOn;
+/* the ships this machine simulates: its own and, on the host, the AI ships (the script names
+ * them, phaser_set_owned); each reports its banks with its own sequence number */
+#define MAXOWN 17
+static struct {
+    DWORD ship, bits, target, hits, on, seq;
+    DWORD sentBits, sentHits, sentOn;
+    int sentValid, pending;
+} g_own[MAXOWN];
+static DWORD g_aiShips[MAXOWN - 1];
+static int g_nAiShips;
 static unsigned long g_staleReports;
-static int g_pending;
 static unsigned long g_gated, g_forcedCharge, g_sent;
 
 static BYTE *local_ship(void);
@@ -137,11 +145,15 @@ static void enforce_remote(void)
             int want = (g_remote[s].bits >> i) & 1;
             if (!b)
                 continue;
+            if (g_cfg.testMode && (g_remote[s].firing & (1u << i)) && !b[BANK_FIRING])
+                tlog_printf("PE %ld %lu %d 0", tlog_ms(), g_remote[s].ship, i); /* stopped during the last frame */
             if (!want && b[BANK_FIRING]) {
                 g_allowStop = 1;
                 ((PFN_Stop)(*(void ***)b)[VT_STOP / 4])(b, 0);
                 g_allowStop = 0;
                 g_stopped++;
+                if (g_cfg.testMode && !b[BANK_FIRING])
+                    tlog_printf("PE %ld %lu %d 1", tlog_ms(), g_remote[s].ship, i); /* stopped here, at once */
             } else if (want && !b[BANK_FIRING] && g_cfg.phaserSync != 2 && g_remote[s].target &&
                        (g_cfg.phaserSync >= 3 || t >= g_remote[s].retry[i])) {
                 float dt = g_dt;
@@ -159,6 +171,10 @@ static void enforce_remote(void)
                 hk_Fire(b, 0, *(int *)&dt, 1);
                 g_driven++;
             }
+            if (b[BANK_FIRING])
+                g_remote[s].firing |= 1u << i;
+            else
+                g_remote[s].firing &= ~(1u << i);
         }
     }
 }
@@ -234,42 +250,48 @@ void phaser_set_remote_seq(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWOR
     g_remote[i].on = on;
 }
 
-/* script: the next state of our own ship to send; 0 if nothing changed */
+/* script: the next report to send (our own ship or, on the host, an AI ship); 0 if none waits */
 int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on, DWORD *seq)
 {
-    if (!g_pending)
-        return 0;
-    g_pending = 0;
-    *ship = g_ownShip;
-    *bits = g_ownBits;
-    *target = g_ownTarget;
-    *hits = g_ownHits;
-    *on = g_ownOn;
-    *seq = g_ownSeq;
-    g_sentShip = g_ownShip;
-    g_sentBits = g_ownBits;
-    g_sentHits = g_ownHits;
-    g_sentOn = g_ownOn;
-    g_sent++;
-    return 1;
+    int k;
+    for (k = 0; k < MAXOWN; k++)
+        if (g_own[k].pending) {
+            g_own[k].pending = 0;
+            *ship = g_own[k].ship;
+            *bits = g_own[k].bits;
+            *target = g_own[k].target;
+            *hits = g_own[k].hits;
+            *on = g_own[k].on;
+            *seq = g_own[k].seq;
+            g_own[k].sentBits = g_own[k].bits;
+            g_own[k].sentHits = g_own[k].hits;
+            g_own[k].sentOn = g_own[k].on;
+            g_own[k].sentValid = 1;
+            g_sent++;
+            return 1;
+        }
+    return 0;
 }
 
-/* every frame: which banks of our own ship fire? Tell the script at once on a change. */
-void phaser_frame(int pythonReady)
+/* script, host: the AI ships it simulates (their banks are reported like its own ship's) */
+void phaser_set_owned(const DWORD *ids, int n)
 {
-    BYTE *ship = local_ship(), *sys, **arr;
-    DWORD bits = 0, id, target = 0, hits = 0, on = 0;
+    int i;
+    if (n > MAXOWN - 1)
+        n = MAXOWN - 1;
+    for (i = 0; i < n; i++)
+        g_aiShips[i] = ids[i];
+    g_nAiShips = n;
+}
+
+/* one simulated ship: its banks' state; 1 if a new report waits for the script */
+static int report_ship(int k, BYTE *ship)
+{
+    BYTE *sys = *(BYTE **)(ship + SHIP_PHASERS), **arr;
+    DWORD bits = 0, id = *(DWORD *)(ship + 4), target = 0, hits = 0, on = 0;
     int n, i;
-    if (!g_cfg.phaserSync)
-        return;
-    if (direct_enabled())
-        direct_frame();
-    enforce_remote();
-    if (!ship)
-        return;
-    sys = *(BYTE **)(ship + SHIP_PHASERS);
     if (!sys)
-        return;
+        return 0;
     n = *(int *)(sys + SUB_NUM_CHILDREN);
     arr = *(BYTE ***)(sys + SUB_CHILDREN);
     for (i = 0; i < n && i < 32 && arr; i++)
@@ -283,22 +305,62 @@ void phaser_frame(int pythonReady)
             if (!target)
                 target = *(DWORD *)(arr[i] + BANK_TARGET);
         }
-    id = *(DWORD *)(ship + 4);
-    if (id == g_ownShip && bits == g_ownBits && hits == g_ownHits && on == g_ownOn)
-        return;
-    g_ownShip = id;
-    g_ownBits = bits;
-    g_ownTarget = target;
-    g_ownHits = hits;
-    g_ownOn = on;
-    g_ownSeq++;
+    if (id == g_own[k].ship && bits == g_own[k].bits && hits == g_own[k].hits && on == g_own[k].on)
+        return 0;
+    if (id != g_own[k].ship)
+        g_own[k].sentValid = 0;
+    g_own[k].ship = id;
+    g_own[k].bits = bits;
+    g_own[k].target = target;
+    g_own[k].hits = hits;
+    g_own[k].on = on;
+    g_own[k].seq++;
     tlog_printf("PO %ld %lu %lu %lu %lu", tlog_ms(), id, bits, hits, on);
     if (direct_enabled())
-        direct_send_banks(id, g_ownSeq, bits, target, hits, on);
-    if (id == g_sentShip && bits == g_sentBits && hits == g_sentHits && on == g_sentOn)
+        direct_send_banks(id, g_own[k].seq, bits, target, hits, on);
+    if (g_own[k].sentValid && bits == g_own[k].sentBits && hits == g_own[k].sentHits && on == g_own[k].sentOn) {
+        g_own[k].pending = 0;
+        return 0;
+    }
+    g_own[k].pending = 1;
+    return 1;
+}
+
+/* every frame: which banks of our own ship fire? Tell the script at once on a change. */
+/* every frame: the banks of the ships this machine simulates; tell the script at once on a change */
+void phaser_frame(int pythonReady)
+{
+    BYTE *ship = local_ship();
+    int i, any = 0;
+    if (!g_cfg.phaserSync)
         return;
-    g_pending = 1;
-    if (pythonReady)
+    if (direct_enabled())
+        direct_frame();
+    enforce_remote();
+    if (ship)
+        any |= report_ship(0, ship);
+    for (i = 0; i < g_nAiShips; i++) {
+        BYTE *ai = ((PFN_FindObject)ADDR_FIND_OBJECT)(0, g_aiShips[i]);
+        int k;
+        if (!ai || ai == ship || !((PFN_IsA)(*(void ***)ai)[2])(ai, 0, TYPE_SHIP))
+            continue;
+        /* its entry: the one of this ship, else one no listed ship uses */
+        for (k = 1; k < MAXOWN && g_own[k].ship != g_aiShips[i]; k++)
+            ;
+        if (k == MAXOWN) {
+            for (k = 1; k < MAXOWN; k++) {
+                int j, listed = 0;
+                for (j = 0; j < g_nAiShips; j++)
+                    listed |= g_own[k].ship == g_aiShips[j];
+                if (!listed)
+                    break;
+            }
+            if (k == MAXOWN)
+                continue;
+        }
+        any |= report_ship(k, ai);
+    }
+    if (any && pythonReady)
         ((PFN_PyRunSimpleString)ADDR_PYRUN_SIMPLESTRING)("import bcmpfix_mp\nbcmpfix_mp.SendBanks()\n");
 }
 

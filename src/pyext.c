@@ -276,6 +276,27 @@ static PyObject *__cdecl m_forcereplay(PyObject *self, PyObject *args)
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(torpedo_force_replay(swig_ptr(t), swig_ptr(s)));
 }
 
+/* bcmpdll.setowned("id id ..."): host, the AI ships it simulates (phaser reports) */
+static PyObject *__cdecl m_setowned(PyObject *self, PyObject *args)
+{
+    const char *s = NULL;
+    DWORD ids[16];
+    int n = 0;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "s", &s))
+        return NULL;
+    while (s && *s && n < 16) {
+        char *end;
+        unsigned long v = strtoul(s, &end, 10);
+        if (end == s)
+            break;
+        ids[n++] = (DWORD)v;
+        s = end;
+    }
+    phaser_set_owned(ids, n);
+    return py_none();
+}
+
 /* bcmpdll.netrole(isHost, hostDirect): for the direct phaser reports */
 static PyObject *__cdecl m_netrole(PyObject *self, PyObject *args)
 {
@@ -369,6 +390,7 @@ static PyMethodDef g_methods[] = {
     {"retire", m_retire, 1, NULL},
     {"authority", m_authority, 1, NULL},
     {"netrole", m_netrole, 1, NULL},
+    {"setowned", m_setowned, 1, NULL},
     {"directstats", m_directstats, 1, NULL},
     {"setlead", m_setlead, 1, NULL},
     {"takebanks", m_takebanks, 1, NULL},

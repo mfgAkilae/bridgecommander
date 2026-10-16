@@ -38,6 +38,7 @@ typedef struct Config {
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int fixDedicatedIds;    /* a dedicated server numbers its objects from slot 15, not the first client's slot 0 */
     int fixConditionInRange; /* script: ConditionInRange registers its group handlers once (issue #27) */
+    int snapNewShips;       /* a new remote ship starts at its first received position, not the create message's */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
     int qpcRebase;          /* game clock relative to process start, not boot */
@@ -111,6 +112,8 @@ unsigned long torpedo_pushed_out(void);
 unsigned long torpedo_predicted(void);
 unsigned long torpedo_advanced(void);
 void lead_install(void);
+unsigned long lead_snapped(void);
+int lead_take_snap(DWORD id);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
 unsigned long relay_count(void);
@@ -138,6 +141,7 @@ void direct_stats(unsigned long *tx, unsigned long *rx, unsigned long *peers);
 void phaser_set_remote_seq(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWORD hits, DWORD on, int path);
 void tlog_printf(const char *fmt, ...);
 int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on, DWORD *seq);
+void phaser_set_owned(const DWORD *ids, int n);
 void phaser_stats2(unsigned long *arc, unsigned long *wait, unsigned long *driven, unsigned long *held,
                    unsigned long *stopHits, unsigned long *list);
 void phaser_stats(unsigned long *gated, unsigned long *charged, unsigned long *sent, unsigned long *started,

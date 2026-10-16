@@ -101,6 +101,8 @@ def DoTick():
 			Finish(pDirect, kDirect)
 			pNet.SendTGMessageToGroup('NoMe', pDirect)
 		bcmpdll.netrole(App.g_kUtopiaModule.IsHost(), g_iDirectHost == pNet.GetHostID())
+		if App.g_kUtopiaModule.IsHost():
+			UpdateOwnedShips(pNet)
 	if t >= g_iNextLead:
 		g_iNextLead = t + LEAD_INTERVAL_MS
 		if Cfg('LatencyCompensation') > 0:
@@ -211,10 +213,18 @@ def OnNetMessage(pObject, pEvent):
 # ship's banks only while we fire them, and shows their hits when ours do.
 
 def SendBanks():
+	# one report per ship that changed (our own ship and, on the host, the AI ships)
+	import bcmpdll
+	while 1:
+		sState = bcmpdll.takebanks()
+		if not sState:
+			return
+		SendBankReport(sState)
+
+def SendBankReport(sState):
 	try:
 		import bcmpdll
-		sState = bcmpdll.takebanks()
-		if not sState or Cfg('PhaserSync') <= 0:
+		if Cfg('PhaserSync') <= 0:
 			return
 		pNet = App.g_kUtopiaModule.GetNetwork()
 		if not pNet:
@@ -236,6 +246,39 @@ def SendBanks():
 	except:
 		import sys
 		LogError('SendBanks', sys.exc_type, sys.exc_value)
+
+def UpdateOwnedShips(pNet):
+	# host: the ships it simulates besides its own (AI ships) report their phaser banks too
+	import bcmpdll
+	import string
+	import Multiplayer.MissionShared
+	pGame = App.MultiplayerGame_Cast(App.Game_GetCurrentGame())
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if not pGame or App.IsNull(pSet):
+		bcmpdll.setowned('')
+		return
+	dPlayers = {}
+	pList = pNet.GetPlayerList()
+	i = 0
+	while i < pList.GetNumPlayers():
+		pShip = pGame.GetShipFromPlayerID(pList.GetPlayerAtIndex(i).GetNetID())
+		if pShip:
+			dPlayers[pShip.GetObjID()] = 1
+		i = i + 1
+	lIDs = []
+	pObj = pSet.GetFirstObject()
+	if not App.IsNull(pObj):
+		iFirst = pObj.GetObjID()
+		iGuard = 0
+		while iGuard < 1000 and len(lIDs) < 16:
+			pShip = App.ShipClass_Cast(pObj)
+			if pShip and not dPlayers.has_key(pShip.GetObjID()) and not pShip.IsDead() and pShip.GetPhaserSystem():
+				lIDs.append(str(pShip.GetObjID()))
+			pObj = pSet.GetNextObject(pObj.GetObjID())
+			if App.IsNull(pObj) or pObj.GetObjID() == iFirst:
+				break
+			iGuard = iGuard + 1
+	bcmpdll.setowned(string.join(lIDs))
 
 def ReceiveDirect(pMessage):
 	global g_iDirectHost

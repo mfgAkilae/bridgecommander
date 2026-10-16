@@ -104,6 +104,43 @@ static int lead_get(DWORD objId)
 
 typedef float *(__fastcall *PFN_GetVec)(void *obj, void *edx, float *out);
 typedef float *(__fastcall *PFN_GetPos)(void *obj, void *edx);
+/* SnapNewShips: a new proxy starts where the "object created" message put it. That position
+ * is as old as the message: a player who joins gets every ship at the place it was created,
+ * seconds ago, and a resent or late message has the same effect. NetworkAI then pulls the
+ * proxy to the received position with its correction lag, so the ship slid into place for up
+ * to 1 s (measured up to 110 units, in about 4 % of the ships that appeared on a screen with
+ * ten players). The reader marks a proxy's first state update (NetworkAI +0x2C, the sender's
+ * time, is still 0 from the constructor 0x0047DAB0); the next correction (netfix.c) places
+ * the proxy at the target. Setting the position here does not last: the correction later in
+ * the frame starts from the position the scene graph still has. */
+#define MAXSNAP 32
+static DWORD g_snapIds[MAXSNAP];
+static int g_snapNext;
+static unsigned long g_snapped;
+
+static void snap_mark(DWORD id)
+{
+    g_snapIds[g_snapNext] = id;
+    g_snapNext = (g_snapNext + 1) % MAXSNAP;
+}
+
+/* netfix.c: 1 once for a proxy whose first state update just arrived */
+int lead_take_snap(DWORD id)
+{
+    int i;
+    for (i = 0; i < MAXSNAP; i++)
+        if (g_snapIds[i] == id) {
+            g_snapIds[i] = 0;
+            g_snapped++;
+            return 1;
+        }
+    return 0;
+}
+
+unsigned long lead_snapped(void)
+{
+    return g_snapped;
+}
 
 /* trace line for one received state update: which NetworkAI fields the reader
  * changed (1 target, 2 forward, 4 up, 8 speed, 16 sender time) and the proxy */
@@ -116,9 +153,9 @@ static void trace_update(void *ship, BYTE *ai, const BYTE *before, int lead)
     int mask = (memcmp(before, ai + 0x30, 12) ? 1 : 0) | (memcmp(before + 12, ai + 0x3C, 12) ? 2 : 0) |
                (memcmp(before + 24, ai + 0x48, 12) ? 4 : 0) | (memcmp(before + 36, ai + 0x54, 4) ? 8 : 0) |
                (memcmp(before + 40, ai + 0x2C, 4) ? 16 : 0);
-    tracef("U obj=%lu st=%.3f mask=%d tgt %.2f %.2f %.2f fwd %.3f %.3f %.3f up %.3f %.3f %.3f spd %.2f lead %d "
+    tracef("U obj=%lu st0=%.3f st=%.3f mask=%d tgt %.2f %.2f %.2f fwd %.3f %.3f %.3f up %.3f %.3f %.3f spd %.2f lead %d "
            "pos %.2f %.2f %.2f nose %.3f %.3f %.3f",
-           *(DWORD *)((BYTE *)ship + 4), *(float *)(ai + 0x2C), mask, t[0], t[1], t[2], f[0], f[1], f[2], u[0], u[1],
+           *(DWORD *)((BYTE *)ship + 4), *(const float *)(before + 40), *(float *)(ai + 0x2C), mask, t[0], t[1], t[2], f[0], f[1], f[2], u[0], u[1],
            u[2], *(float *)(ai + 0x54), lead, pos[0], pos[1], pos[2], nose[0], nose[1], nose[2]);
 }
 
@@ -153,6 +190,8 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
             target[2] += fwd[2] * s;
         }
     }
+    if (ai && t0 == 0.0f && *(float *)(ai + 0x2C) != 0.0f && g_cfg.snapNewShips)
+        snap_mark(*(DWORD *)((BYTE *)ship + 4)); /* the proxy's first update */
     if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
         orient_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
     if (ai && *(float *)(ai + 0x2C) != t0 && (g_cfg.velocityExtrapolation || g_cfg.knockbackCorrection || g_cfg.velocityTracking))
@@ -166,7 +205,8 @@ void lead_install(void)
     static const BYTE prologue[7] = {0x6a, 0xff, 0x68, 0xd8, 0xb9, 0x87, 0x00}; /* push -1; push 0x87b9d8 */
     BYTE jmp[5];
     LONG rel;
-    if (!g_cfg.latencyComp && g_cfg.traceSec <= 0 && g_cfg.orientationCorrection != 2 && !g_cfg.velocityExtrapolation)
+    if (!g_cfg.latencyComp && g_cfg.traceSec <= 0 && g_cfg.orientationCorrection != 2 && !g_cfg.velocityExtrapolation &&
+        !g_cfg.snapNewShips)
         return;
     if (memcmp((void *)ADDR_SHIP_READER, prologue, 7) != 0) {
         logf("PATCH latency compensation: prologue differs, NOT applied");
@@ -182,4 +222,6 @@ void lead_install(void)
     memcpy(jmp + 1, &rel, 4);
     mem_write((void *)ADDR_SHIP_READER, jmp, 5);
     logf("PATCH latency compensation (state update reader): applied");
+    if (g_cfg.snapNewShips)
+        logf("PATCH new remote ships start at their first received position: applied");
 }

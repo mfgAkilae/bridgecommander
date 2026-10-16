@@ -114,6 +114,10 @@ def run_job(path, status):
         args += ['--max-players', str(job['max_players'])]
     for kv in job.get('variant', []):
         args += ['--variant', kv]
+    if job.get('ai_ships'):
+        args += ['--ai-ships', str(job['ai_ships'])]
+    if job.get('target') and job['target'] != 'nearest':
+        args += ['--target', job['target']]
     if job.get('raise_once'):
         args.append('--raise-once')
     if job.get('test_infopane'):

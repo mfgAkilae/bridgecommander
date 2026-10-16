@@ -1,6 +1,6 @@
 """Phaser hits per shooter, target and peer (6-player runs, test pilot with src= in H lines).
 
-Usage: python -I phasers.py <run dir> [more run dirs]
+Usage: python -I phasers.py [--shooters ai|players] <run dir> [more run dirs]
 A "beam" is a series of phaser hit events of one shooter on one target, at most 400 ms apart,
 as one instance logs it. For every beam the shooter's own machine shows: did each other peer show
 a beam of the same shooter on the same target overlapping it (+-700 ms)? Also the reverse: beams
@@ -18,6 +18,16 @@ NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel
 ROLE_NAMES = dict([('host', 'Ace'), ('client', 'Bravo')] + [('client%d' % k, NAMES[k]) for k in range(2, 16)])
 
 
+def base_name(n):
+    """a ship's name without the respawn suffix (Bravo1 -> Bravo); AI ships keep theirs (AI3)"""
+    return n if n.startswith('AI') else n.rstrip('0123456789')
+
+
+def owns(role, name):
+    """the instance that flies the ship: the player's own, the AI ships on the host"""
+    return name == ROLE_NAMES.get(role) or (role == 'host' and name.startswith('AI'))
+
+
 def beams(path):
     ev = {}
     for line in open(path, errors='replace'):
@@ -27,7 +37,7 @@ def beams(path):
             src = kv.get('src', '?')
             if src == '?':
                 continue
-            ev.setdefault((src.rstrip('0123456789'), p[2].rstrip('0123456789')), []).append(int(p[1]))
+            ev.setdefault((base_name(src), base_name(p[2])), []).append(int(p[1]))
     out = {}
     for k, ts in ev.items():
         ts.sort()
@@ -50,7 +60,15 @@ def main():
     tot = {'shooter': 0, 'seen': 0, 'missing': 0, 'others_only': 0, 'by_host': 0, 'host_missing': 0,
            'host_beams': 0, 'host_beams_missing': 0, 'others_only_host': 0}
     lens_missing, lens_seen, lens_others = [], [], []
-    for run in sys.argv[1:]:
+    args = sys.argv[1:]
+    shooters = 'all'
+    if '--shooters' in args:
+        shooters = args[args.index('--shooters') + 1]
+        args.remove(shooters)
+
+    def kind(src):
+        return shooters == 'all' or (shooters == 'ai') == src.startswith('AI')
+    for run in [a for a in args if not a.startswith('--')]:
         w0, w1 = analyze.common_window(run)
         logs = {}
         for f in os.listdir(run):
@@ -60,7 +78,7 @@ def main():
         for shooter_role, name in ROLE_NAMES.items():
             if shooter_role not in logs:
                 continue
-            own = {k: v for k, v in logs[shooter_role].items() if k[0] == name}
+            own = {k: v for k, v in logs[shooter_role].items() if owns(shooter_role, k[0]) and kind(k[0])}
             for (src, tgt), bl in own.items():
                 for b in bl:
                     if not w0 <= b[0] <= w1:
@@ -86,7 +104,7 @@ def main():
                 if r == shooter_role:
                     continue
                 for (src, tgt), bl in lg.items():
-                    if src != name:
+                    if not owns(shooter_role, src) or not kind(src):
                         continue
                     for b in bl:
                         if not w0 <= b[0] <= w1:

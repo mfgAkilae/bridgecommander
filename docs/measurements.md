@@ -940,3 +940,136 @@ the first run's ships drifted apart (mean distance 1067, up to 2278 units at the
 150 normally), so they got fewer updates: peak error median 3.6, 90th percentile 12.2, max 58.9; two
 repeats: median 3.3–3.4, max 5.1–5.2. Join test: every client saw every ship. Installer update from
 v1.7.1 tested. No crashes, no script errors.
+
+## Phaser beam length on the other screens (v1.7.3)
+
+The v1.7.0 measurements found a beam lasting about 50 ms longer on the other screens than on the
+shooter's. That came from the method: `banks.py` read the bank states the test pilot polls every
+50 ms. On the shooter's machine the pilot's StartFiring does not start the bank itself: the bank
+starts in the weapon system's next update, after the pilot's poll. Its StopFiring stops the bank at
+once, inside the call. So the polled start on the shooter came about 40 ms late and the polled stop
+about 10 ms early, and the shooter's beam looked about 50 ms shorter. On the other machines a bank starts
+and stops in the frame the report arrives, and the poll sees both with the same lag.
+
+The test build now logs each bank change in the frame it happens: `PO` when the owner's banks change,
+`PS` / `PE` when another ship's bank starts / stops on this machine. `banks.py` uses these lines when
+a run has them (`--polled` forces the old way). Six players, 60 ms ±20 ms, 1 % loss, two runs:
+
+| | polled bank states | telemetry |
+|---|---|---|
+| start delay on the other peer, median (10th–90th percentile) | 60 ms (37–96), 60 ms (38–98) | 77 ms (58–100), 78 ms (59–101) |
+| duration on the other peer minus the shooter's, median (10th–90th) | +50 ms (−2…+91), +52 ms (+2…+98) | +1 ms (−29…+27), +1 ms (−28…+30) |
+| bank firings of the shooter also on the other peer | 100.0 %, 99.9 % | 99.8 %, 99.7 % |
+
+A beam lasts as long on every screen; it starts and stops one network latency (plus up to a frame)
+after the shooter's. No code change was needed.
+
+## Issue #28: AI ships' phasers (v1.7.3)
+
+New test: five players (host and four clients) against five AI ships that the host creates
+(`mptest.py --ai-ships 5 --target ai`: the pilots attack only the AI ships, the AI ships attack the
+players with the game's `BasicAttack` AI, a destroyed AI ship comes back after 15 s). 240 s,
+60 ms ±20 ms, 1 % loss. `phasers.py` and `banks.py` take `--shooters ai|players`.
+
+| | AI shooters, v1.7.2 | AI shooters, fix | players, v1.7.2 | players, fix |
+|---|---|---|---|---|
+| beams of the shooter also shown by the other peers | 91.7 % | 100.0 % | 99.9 % | 100.0 % |
+| beams other peers showed and the shooter did not | 191 | 4 | 4 | 0 |
+| bank firings also on the other peer (polled) | 70.1 % | 99.4 % | 100.0 % | 99.7 % |
+| start delay on the other peer, median (polled) | 207 ms | 62 ms | 59 ms | 55 ms |
+
+The host reported only its own ship's banks, so the AI ships it simulates kept the original
+behaviour: every machine decided their firing arcs and hits itself. Now the host's script lists the
+ships it simulates besides its own every second (each ship in the game's set that is no player's
+ship, `bcmpdll.setowned`), and the DLL reports their banks like its own ship's, each with its own
+sequence number (up to 16 ships). With the telemetry, AI ships' banks start on the other peers a
+median 68 ms after the host's and last 3 ms longer (players: 73 ms, +1 ms). The host's phaser hits
+(0.5 s bins) were on the clients in 94–97 % before, 100 % after.
+
+Other results of the run with the fix: position errors 0.04 (clients see the host, mean),
+0.04 (host sees clients) and 0.07 (clients see clients), no jumps; torpedo hits on the host seen by
+all four clients 294 of 297; hull values on the clients a mean 0.11 % of the maximum off the host's
+(six-player release runs 0.10 %). The flag "shield or hull" of a torpedo hit differed in 38 of 1230
+matched hits (3.1 %; v1.7.2 52, 3.5 %; six-player release runs 1–2 %): the AI ships keep the
+players' shields low, and a hit on a facing near zero counts as a shield hit on one machine and as a
+hull hit on another. The damage is the host's.
+
+## Thirty minutes with ten clients (v1.7.3)
+
+Dedicated server, ten clients and two AI ships that the server creates (they attack the players; a
+destroyed one comes back after 15 s), 1800 s, 60 ms ±20 ms, 1 % loss. At 120 s and then every
+300 s the server set every hull to 5 %, so ships died and respawned (65 deaths, 8 new AI ships).
+Another program (five game instances of a different project) loaded the PC during the run. The run
+used the v1.7.3 code without `SnapNewShips` (next section).
+
+- No instance stalled, crashed or logged a script error. Frames per second per 5 s on the clients:
+  median 68–71, lowest 23–52 (the dips came with the mass deaths after the hull drops); the server
+  105–122.
+- Memory: the sandbox had 13.2–14.2 GB of 16 GB free during the whole run, at the end as much as
+  at the start. Event handlers stayed at 400–470 per client and 618 on the server (issue #27).
+- Positions (mean / 95th percentile, units): clients see the server's AI ships 0.05 / 0.12, the
+  server sees the clients 0.08 / 0.17, clients see each other 0.10 / 0.23; backward steps 0.0–0.1 %.
+  47 of the 67 jumps were one fast move of an AI ship that every client followed (the AI flew
+  75 units/s for half a second, on the server too); the other 20 came from ships that appeared at
+  an old position and slid into place.
+- Torpedo hits on the server while all ten clients were in the game: 1566 of 1576 seen by all, 5 by
+  none. The shield/hull flag differed in 1.9 % of the matched hits.
+- Phasers: beams of the shooter also shown by the other peers 99.8 % for the players (37300) and
+  99.8 % for the AI ships (28090); bank firings 99.7 % / 99.6 %, start delay median 77 / 84 ms,
+  duration difference +1 ms. The server's phaser hits (0.5 s bins) were on every client in 100 %.
+- Hull values on the clients were a mean 0.19 % of the maximum off the server's. 36 of 1486
+  differences above 5 % lasted longer than 0.4 s (at most 1.1 s), all in fast series of hits
+  (torpedo volleys, the forced hull drops), where the clients stay one latency behind.
+
+## Issue #29: ships that appear at an old position (v1.7.3, `SnapNewShips`)
+
+A ship that appears on a peer starts at the position of its "object created" message. A trace
+(`TraceStateSec`) of a join showed the ship of the player who had joined 3 s earlier at its spawn
+point, 11 units behind, until the first state update; then NetworkAI pulled it into place with its
+correction lag (time constant 0.2 s). `tools/spawn.py` measures every ship that appears on a peer
+within 5 s after its owner created it. In the 30-minute run 31 of 720 were more than 5 units off at
+first and 13 more than 20, up to 110 units. A dedicated run of the original game had 9 of 76 more
+than 5 units off and 7 more than 20 (up to 155 units; 90th percentile still 4.7 units after 1 s).
+
+`SnapNewShips` places a proxy at its target in the first correction after its first state update
+(setting the position in the reader does not last). Dedicated server, ten clients, two AI ships,
+hulls at 3 % every 60 s, 300 s, 60 ms ±20 ms, 1 % loss:
+
+| | without | with |
+|---|---|---|
+| ships appearing on a peer | 252 | 208 |
+| more than 5 units off at the first sample (before the first update arrived) | 7 | 11 |
+| 0.25 s later: 90th percentile / maximum | 0.2 / 10.7 | 0.2 / 1.5 |
+| 0.5 s later: 90th percentile / maximum | 0.2 / 3.0 | 0.2 / 1.7 |
+
+The ship still shows at the old position until its first update arrives (one latency plus the
+update interval), and then is where its owner has it instead of sliding there. Positions of the run
+with the fix: clients see the server's ships 0.05 / 0.13, the server sees the clients 0.10 / 0.19,
+clients see each other 0.12 / 0.27, no jumps; torpedo hits seen by all clients 251 of 251.
+
+## v1.7.3 release check
+
+Exact release build, default settings (`SnapNewShips=1`). Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.13, 0.0 % | 0.04 / 0.09, 0.1 % | – | 4 of 4 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.11 / 0.22, 0.0 % | 0.07 / 0.15, 0.1 % | – | 4 of 4 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.14, 0.1 % | 0.05 / 0.11, 0.0 % | 0.08 / 0.18, 0.1 % | 73 of 73 |
+| 6 players, all hulls at 5 % after 40 s | 0.05 / 0.10, 0.0 % | 0.04 / 0.09, 0.0 % | 0.07 / 0.15, 0.0 % | 58 of 58 |
+| 5 players against 5 AI ships | 0.05 / 0.11, 0.0 % (with the AI ships) | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 279 of 283 |
+| dedicated server + 10 clients | – | 0.08 / 0.17, 0.0 % | 0.10 / 0.23, 0.0 % | 140 of 142 |
+
+Phasers: beams shown by the other peers 99.9 % and 100 % (six players), 99.6 % (dedicated), 100 % of
+the players' and 96.0 % of the AI ships' beams in the AI run: all 95 missing AI beams were one AI
+ship firing at the host's ship at 162–175 units, where the clients showed the beam without hits
+(#30). Bank firings 99.3–99.9 %, start delay median 76 ms. Ships that appeared on a peer were at
+most 0.3–0.4 units off 0.25 s later. Every frame rate stayed above 24 per 5 s; no instance stalled
+(no watchdog sample); in the dedicated run the first client had 366 event handlers at the end, the
+server 281. In the six-player run the host took one 168 ms frame while it created a joining player's
+ship, seen as four jumps of all ships at once. Mixed game (v1.7.3 host; v1.7.2, v1.7.0 and two
+v1.7.3 clients; one original): among the v1.7.x players phasers 100 % (banks and beams), torpedo
+hits 100 %, positions 0.05–0.09. Kick test: peak error median 3.4, 90th percentile 4.3, max 5.4
+(v1.7.2: 3.3–3.4, 5.1–5.2). Join test: every client saw every ship. Installer update from v1.7.2:
+settings kept, new files installed (`SnapNewShips` is on by default when the kept `bcmpfix.ini`
+lacks it). No crashes, no script errors.

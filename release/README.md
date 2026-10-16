@@ -44,6 +44,7 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 - **Teleports after packet loss:** Position updates carry an absolute position only once per second and deltas in between. The receiver added these deltas up by mistake. When an absolute position got lost, the ship jumped forward by several seconds of travel and then back.
   - Fix: every update carries the absolute position, and the receiver applies deltas correctly.
 - **Newly spawned ships flung away:** A newly created network ship used the whole game time as the time step of its first frame and was flung far away. This is fixed.
+- **Ships sliding into place:** A ship that appears on your screen (a player joins or respawns, an AI ship is created) started at the position in the game's "object created" message. That position can be seconds old: when you join, you get every ship at the place where it was created. The ship then slid to its real position for up to a second, in a ten-player game sometimes over 100 units. Since v1.7.3 it starts at the first position received for it (`SnapNewShips`).
 - **Slow correction:** Remote ships were pulled to their network position with a time constant of about 1 s. Errors below 0.5 units were not corrected at all.
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
   - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
@@ -84,6 +85,8 @@ Since v1.7.0 the beams also start almost together with the shooter's: about 0.06
 
 - The other computers start a reported bank at once. Before, the original's target check made them wait for the weapon system's next attempt, which comes every 0.33 s.
 - Each player sends the reports directly to every other bcmpfix player (`DirectPhaserReports=1`). Before, a client's report reached the other clients only through the host, one latency later.
+
+Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, for example AI ships added by mods or the starbase in the starbase mission (tested only with AI ships created by the test tool). Before, every computer decided their firing itself: in a test with five AI ships, 8.3 % of their beams were missing on another screen; now none were.
 
 ### 4. Network and timing
 

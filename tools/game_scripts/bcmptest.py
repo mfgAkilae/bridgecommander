@@ -19,6 +19,8 @@ g_fLogEvery = 0.1
 g_fQuitAfter = 0.0
 g_bDedicated = 0
 g_iMaxPlayers = 0
+g_iAIShips = 0
+g_sTarget = 'nearest'
 
 def Env(sKey, sDefault):
 	import bcmpdll
@@ -29,7 +31,7 @@ def Env(sKey, sDefault):
 
 def InitEnv():
 	global g_fStart, g_bInit, g_sRole, g_sName, g_sJoin, g_iSpecies, g_iSystem, g_sAI, g_fLogEvery, g_fQuitAfter
-	global g_bDedicated, g_iMaxPlayers
+	global g_bDedicated, g_iMaxPlayers, g_iAIShips, g_sTarget
 	g_bInit = 1
 	g_fStart = Now()
 	g_sRole = Env('BCMP_ROLE', '')
@@ -44,6 +46,10 @@ def InitEnv():
 	g_bDedicated = Env('BCMP_DEDICATED', '0') == '1' and g_sRole == 'host'
 	# BCMP_MAX_PLAYERS=<n>: the host raises the player limit (the menu allows 2..8)
 	g_iMaxPlayers = string.atoi(Env('BCMP_MAX_PLAYERS', '0'))
+	# BCMP_AI_SHIPS=<n>: the host keeps n AI ships (AI1..AIn) that attack the players; every
+	# instance logs them. BCMP_TARGET=ai: the pilot only attacks AI ships.
+	g_iAIShips = string.atoi(Env('BCMP_AI_SHIPS', '0'))
+	g_sTarget = Env('BCMP_TARGET', 'nearest')
 	global g_iSeed
 	if g_sRole == 'host':
 		g_iSeed = string.atoi(Env('BCMP_SEED', '12345'))
@@ -213,7 +219,73 @@ def GetShips():
 		if pShip:
 			lShips.append((pPlayer.GetNetID(), pShip))
 		i = i + 1
+	for pShip in GetAIShips():
+		lShips.append((-1, pShip))
 	return lShips
+
+def GetAIShips():
+	# the AI ships (AI1..AIn) in the starting set
+	lShips = []
+	if g_iAIShips <= 0:
+		return lShips
+	import Multiplayer.MissionShared
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if App.IsNull(pSet):
+		return lShips
+	i = 1
+	while i <= g_iAIShips:
+		pShip = App.ShipClass_GetObject(pSet, 'AI%d' % i)
+		if pShip and not pShip.IsDead():
+			lShips.append(pShip)
+		i = i + 1
+	return lShips
+
+g_lAIClasses = ('Galor', 'Keldon', 'Vorcha', 'BirdOfPrey', 'Akira', 'Galaxy', 'Warbird', 'Nebula', 'Sovereign', 'Ambassador')
+g_dAIGone = {}
+g_fNextAICheck = 0.0
+
+def KeepAIShips():
+	# host: (re)create the AI ships; one that is gone is recreated 15 s later
+	global g_fNextAICheck
+	if g_iAIShips <= 0 or g_sRole != 'host' or Now() < g_fNextAICheck or InState() < 10.0:
+		return
+	g_fNextAICheck = Now() + 1000
+	import Multiplayer.MissionShared
+	import loadspacehelper
+	import AI.Compound.BasicAttack
+	pSet = Multiplayer.MissionShared.g_pStartingSet
+	if App.IsNull(pSet):
+		return
+	pTargets = App.ObjectGroup()
+	for sName in ('Ace', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima'):
+		pTargets.AddName(sName)
+		pTargets.AddName(sName + '1')
+		pTargets.AddName(sName + '2')
+	i = 1
+	while i <= g_iAIShips:
+		sName = 'AI%d' % i
+		pObj = App.ShipClass_GetObject(pSet, sName)
+		if pObj:
+			if g_dAIGone.has_key(sName):
+				del g_dAIGone[sName]
+		elif not g_dAIGone.has_key(sName):
+			g_dAIGone[sName] = Now() + (i > 0 and 15000 or 0)
+			if not g_dAIGone.has_key('started'):
+				g_dAIGone[sName] = Now()
+		elif Now() >= g_dAIGone[sName]:
+			del g_dAIGone[sName]
+			pShip = loadspacehelper.CreateShip(g_lAIClasses[(i - 1) % len(g_lAIClasses)], pSet, sName, '')
+			if pShip:
+				kP = App.TGPoint3()
+				kP.SetXYZ(Rand() * 160.0 - 80.0, Rand() * 160.0 - 80.0, Rand() * 160.0 - 80.0)
+				pShip.SetTranslate(kP)
+				pShip.RandomOrientation()
+				pShip.UpdateNodeOnly()
+				pSet.GetProximityManager().UpdateObject(pShip)
+				pShip.SetAI(AI.Compound.BasicAttack.CreateAI(pShip, pTargets))
+				Log('X AISHIP %d %s %s' % (Now(), sName, g_lAIClasses[(i - 1) % len(g_lAIClasses)]))
+		i = i + 1
+	g_dAIGone['started'] = 1
 
 # ---- scripted pilot: flies the local player ship through the same calls the
 # keyboard/mouse handlers use (no AI), aggressively, to provoke desync.
@@ -247,6 +319,8 @@ def FindEnemy(pPlayer):
 	fBest = 0.0
 	for (iID, pShip) in GetShips():
 		if pShip.GetObjID() == pPlayer.GetObjID() or pShip.IsDead() or pShip.IsDying():
+			continue
+		if g_sTarget == 'ai' and iID != -1:
 			continue
 		if pShip.GetObjID() == g_iTargetID:
 			pCur = pShip
@@ -322,6 +396,7 @@ def InGame():
 		return
 	InstallHandlers()
 	pPlayer = pGame.GetPlayer()
+	KeepAIShips()
 	if g_bDedicated:
 		# no ship: only watch and log
 		pPlayer = None
@@ -355,6 +430,8 @@ def InGame():
 		iLocal = 0
 		if pPlayer and pShip.GetObjID() == pPlayer.GetObjID():
 			iLocal = 1
+		elif iID == -1 and g_sRole == 'host':
+			iLocal = 1  # the host simulates the AI ships
 		kFwd = pShip.GetWorldForwardTG()
 		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d %.3f %.3f %.3f' % (t, fGameTime, pShip.GetName(), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying(), kFwd.GetX(), kFwd.GetY(), kFwd.GetZ()))
 	LogTorpedoes(t, pPlayer)

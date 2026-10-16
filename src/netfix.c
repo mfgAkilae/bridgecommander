@@ -207,6 +207,30 @@ static void align_orientation(BYTE *ai, void *ship, float dt)
     ((PFN_Align)ADDR_ALIGN_TO_VECTORS)(ship, 0, f, u);
 }
 
+/* SnapNewShips (lead.c): the first correction after a proxy's first state update places it at
+ * the target and turns it to the received orientation */
+static void snap_new(BYTE *ai, void *ship)
+{
+    void **vt = *(void ***)ship;
+    float f[3], u[3], d;
+    int i;
+    if (trace_active()) {
+        float *pos = ((PFN_GetPos)vt[0x94 / 4])(ship, 0), *t = (float *)(ai + 0x30);
+        tracef("N obj=%lu from %.2f %.2f %.2f to %.2f %.2f %.2f", *(DWORD *)((BYTE *)ship + 4), pos[0], pos[1], pos[2],
+               t[0], t[1], t[2]);
+    }
+    ((PFN_SetPos)vt[0x78 / 4])(ship, 0, (float *)(ai + 0x30));
+    memcpy(f, ai + 0x3C, 12);
+    memcpy(u, ai + 0x48, 12);
+    if (!norm3(f))
+        return;
+    d = u[0] * f[0] + u[1] * f[1] + u[2] * f[2];
+    for (i = 0; i < 3; i++)
+        u[i] -= f[i] * d; /* orthogonal to the forward vector */
+    if (norm3(u))
+        ((PFN_Align)ADDR_ALIGN_TO_VECTORS)(ship, 0, f, u);
+}
+
 static int knocked(BYTE *ai, void *ship)
 {
     float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
@@ -217,6 +241,10 @@ static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float 
 {
     (void)edx;
     g_veloDirValid = g_feedForward = 0;
+    if (ship && g_cfg.snapNewShips && lead_take_snap(*(DWORD *)((BYTE *)ship + 4))) {
+        snap_new((BYTE *)self, ship);
+        return;
+    }
     if (ship && (g_cfg.velocityExtrapolation || g_cfg.velocityTracking ||
                  (g_cfg.knockbackCorrection && knocked((BYTE *)self, ship)))) {
         /* replace NetworkAI's target (reported nose * speed) with the extrapolation
@@ -296,8 +324,9 @@ static void __fastcall hk_SendStateUpdates(void *self, void *edx)
     }
     if (g_cfg.statsIntervalSec > 0 && t - g_statT >= g_cfg.statsIntervalSec) {
         if (g_statT > 0)
-            logf("MP frames %.1f/s, state-update rounds %.1f/s, relayed client-ship writes %lu, held-back corrections %lu",
-                 g_frames / (t - g_statT), g_sends / (t - g_statT), relay_count(), g_heldBack);
+            logf("MP frames %.1f/s, state-update rounds %.1f/s, relayed client-ship writes %lu, held-back corrections %lu, "
+                 "new ships placed %lu",
+                 g_frames / (t - g_statT), g_sends / (t - g_statT), relay_count(), g_heldBack, lead_snapped());
         g_frames = g_sends = 0;
         g_statT = t;
     }
@@ -589,7 +618,7 @@ void netfix_install(void)
     if (g_cfg.noDeadband)
         patch_bytes(ADDR_NETAI_DEADBAND, "d8 1d a8 87 88 00", "d8 1d 58 8b 88 00", "NetworkAI no 0.5 deadband");
     if ((g_cfg.correctionGain > 0 && g_cfg.correctionGain != 1.0f) || g_cfg.smoothCorrection ||
-        g_cfg.orientationCorrection)
+        g_cfg.orientationCorrection || g_cfg.snapNewShips)
         redirect_call(ADDR_CALL_NETAI_CORRECT, (void *)hk_NetAICorrect, (void **)&o_NetAICorrect, ADDR_NETAI_CORRECT,
                       g_cfg.smoothCorrection ? "NetworkAI correction gain + no backward correction"
                                              : "NetworkAI correction gain");

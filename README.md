@@ -172,6 +172,8 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   the original game, fixed in v1.7.1, #24). In big games the player who joined first froze for
   seconds, up to a minute: the combat music's range condition doubled its event handlers with every
   join, death and respawn (a bug of the original game, fixed in v1.7.2, #27).
+  A 30-minute game with ten clients and two AI ships ran without stalls, crashes or memory growth
+  (v1.7.3, see `docs/measurements.md`).
 - Mixed games (#26, six players with v1.7.0, v1.6.0 and the original game): no errors in any
   combination. Positions and torpedo reports work across bcmpfix versions if the host runs bcmpfix;
   players without the mod keep the original errors. Phasers are synchronised only among players with
@@ -190,8 +192,18 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   (#23; 60 ms latency: 57 ms median, v1.6.0 223 ms). The players' bcmpfix copies exchange the phaser
   reports directly by UDP on the game port; the host tells each player the others' IP addresses.
   Tested only on loopback in the sandbox: behind NAT routers the direct packets may not arrive, then
-  the reports come through the host as before. A beam lasts about 50 ms longer on the other screens
-  than on the shooter's.
+  the reports come through the host as before. A beam lasts as long on the other screens as on the
+  shooter's (the 50 ms difference reported for v1.7.0 was the test pilot's polling, see
+  `docs/measurements.md`).
+- Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, such as AI ships of
+  mods or the starbase of the starbase mission (tested only with AI ships the test pilot creates).
+  Before, every computer decided their firing itself: in a test with five AI ships 8.3 % of their
+  beams were missing on another screen, now none (#28).
+  At the edge of the phaser range (162–175 units in one test) a beam can hit on the host and show no
+  hits on the other screens, which still show the beam (#30).
+- Since v1.7.3 a ship that appears on a screen (a player joins or respawns, an AI ship is created)
+  starts at the first position received for it. Before, it started at the position of its "object
+  created" message, which can be seconds old, and slid into place for up to a second (#29).
 - Torpedo flight paths still differ a little between players: each computer spawns another player's
   torpedo from that player's ship as it sees it. Since v1.3.0 the flag bits (#8) and the receivers'
   guidance values (#9) match the shooter's. The hit outcome is the host's.
@@ -214,6 +226,8 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   - `mptest.py` – starts host and client with a test configuration (inside Windows Sandbox only).
   - `sbx_agent.py`, `sbx_runner.py`, `sbx_job.py` – job queue between host and sandbox.
   - `analyze.py` – position error, torpedo hit matching.
+  - `combat.py`, `phasers.py`, `banks.py`, `torpstats.py`, `mixed.py`, `spawn.py` – hull, phaser and torpedo
+    sync, mixed versions, where newly appearing ships show up.
   - `game_scripts/` – `Local.py` and `bcmptest.py`, the scripted pilot (copy into the game's `scripts` folder for tests).
   - `sandbox/` – Windows Sandbox configuration and dgVoodoo2 settings.
   - `ghidra/`, `asm.cmd`, `fn.py`, `gen_names.py` – Ghidra scripts and helpers.

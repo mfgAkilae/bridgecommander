@@ -123,6 +123,8 @@ def main():
     ap.add_argument('--clients', type=int, default=1, help='number of client instances (1-15)')
     ap.add_argument('--dedicated', action='store_true', help='the host is a dedicated server (-Dedicated, no ship)')
     ap.add_argument('--max-players', type=int, default=0, help='the host raises the player limit (menu: 2-8)')
+    ap.add_argument('--ai-ships', type=int, default=0, help='the host keeps this many AI ships attacking the players')
+    ap.add_argument('--target', default='nearest', help="'ai': the pilots only attack the AI ships")
     ap.add_argument('--variant', action='append', default=[],
                     help="ROLE=NAME: 'off' (original game) or a release vX.Y.Z for one instance, e.g. client2=v1.6.0")
     ap.add_argument('--solo', action='store_true')
@@ -202,6 +204,8 @@ def main():
             'BCMP_DAMAGE_EVERY': a.damage.split(':')[3] if a.damage.count(':') >= 3 else '0',
             'BCMP_DEDICATED': '1' if a.dedicated and role == 'host' else '0',
             'BCMP_MAX_PLAYERS': str(a.max_players) if role == 'host' else '0',
+            'BCMP_AI_SHIPS': str(a.ai_ships),
+            'BCMP_TARGET': a.target,
         })
         for f in ('tlog_%s.txt' % role,):
             p = os.path.join(out, f)
