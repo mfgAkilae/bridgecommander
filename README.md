@@ -13,6 +13,58 @@ inside Windows Sandbox under simulated network conditions.
 
 No game files are included. You need your own copy of the game.
 
+## What it improves
+
+Measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per
+direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances
+are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.md`](docs/measurements.md).
+
+**Ship positions**
+
+| Problem | Before | After | Version |
+|---|---|---|---|
+| Position error in a duel at 60 ms (host ship / client ship) | 3.40 / 2.44 | 0.06 / 0.04 | v1.0–v1.4 |
+| Teleports after packet loss (largest single error) | 41 units | 1.6 | v1.0 |
+| Position error with ten clients | 6.2 units | 0.1–0.2 | v1.0–v1.4 |
+| Correction time constant / dead band | 1 s / 0.5 units | 0.2 s / 0 | v1.0 |
+| Turns: sideways error / nose off the reported direction | 0.2–0.3 / 30–40° | ≈0.05 / a few ° | v1.4 (#11) |
+| Knockback: a hit pushes a ship off its nose | up to 40 units, seconds | max 5.4, at once | v1.3 (#19) |
+| Host passes on client ships (3+ players) | 1.1 units | ≈0.1 | v1.1 (#10) |
+| A ship that just appeared slides into place (join, respawn) | up to 110 units, 1 s | ≤1.5 after 0.25 s | v1.7.3 (#29) |
+| Distant ships get one update per second beyond | 343 units | 1029 units | v1.3 (#20) |
+
+**Torpedoes**
+
+| Problem | Before | After | Version |
+|---|---|---|---|
+| Hits seen by one player only (duel, 60 ms) | 7 of 15 | 0 of 5 | v1.0–v1.3 |
+| Hits seen by all ten clients | 51 % | 94–100 % | v1.0–v1.5 |
+| When a client shows a hit | one latency after the host | ≈65 ms before the host | v1.5 (#12) |
+| Torpedoes of other players left the tube sideways, without launch sound | flags swapped | shooter's values | v1.3 (#8, #9) |
+
+**Phasers**
+
+| Problem | Before | After | Version |
+|---|---|---|---|
+| A bank fires on the shooter's screen but not on another one | 22 % | < 1 % | v1.6 (#22) |
+| A client's beam does damage on the host | 88–93 % | 99–100 % | v1.6 (#22) |
+| A beam the shooter hit is shown on the other screens | 84–87 % | 99.6–100 % | v1.6–v1.7 |
+| Beam starts on the other screens after the shooter's | 0.27 s | 0.06–0.08 s | v1.7.0 (#23) |
+| AI ships: beams shown / same banks firing | 91.7 % / 70.1 % | 100 % / 99.4 % | v1.7.3 (#28) |
+
+**Network, joining, stability**
+
+| Problem | Before | After | Version |
+|---|---|---|---|
+| Resend of a lost guaranteed packet (holds up all later messages) | ≥ 1 s | 0.3 s | v1.0 |
+| Game clock after days of Windows uptime | ±15 ms off | exact | v1.0 |
+| First frame of a newly created network ship | flung away | correct | v1.0 |
+| Joining while a ship spawns (windowed mode) | freeze | runs | v1.2 |
+| A ship stays invisible after joining | 4 of 6 joins | 0 | v1.3 (#18) |
+| Dedicated server: the first player's ship | invisible | visible | v1.7.1 (#24) |
+| Freezes with ten players (event handlers doubling) | up to 37 s, 98667 handlers | none, ≈400 | v1.7.2 (#27) |
+| Script error in windowed mode | game waits in a debug console | logged, game continues | v1.2 |
+
 ## Installation
 
 **Every** player installs the fix, the host above all.
