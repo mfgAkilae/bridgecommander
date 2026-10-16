@@ -26,6 +26,7 @@ def main():
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--dedicated', action='store_true')
     ap.add_argument('--max-players', type=int, default=0)
+    ap.add_argument('--variant', action='append', default=[], help="ROLE=off|vX.Y.Z (see mptest.py)")
     ap.add_argument('--nowait', action='store_true')
     ap.add_argument('--nodll', action='store_true')
     ap.add_argument('--set', action='append', default=[])

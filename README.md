@@ -164,13 +164,16 @@ Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 
 - Tested in one sandbox with up to eleven players: a dedicated server with ten clients and a listen
-  server with ten clients (#13), not over the internet and not in games where only some players run
-  bcmpfix. The game's menu allows at most eight players; the tests raised the limit by script. With
-  ten clients and 60 ms bcmpfix kept positions within 0.1–0.2 units (original: 6.2), and 94–100 % of
-  the torpedo hits were seen by all clients (original: 51 %); the host's upload was about 87 kB/s. On a dedicated
-  server the first client's ships can collide with the host's own object IDs, and then that ship is
-  missing for everyone (a bug of the original game, seen once, #24). Mixed games and internet
-  connections: #26. Since v1.1.0 the host relays the received state of client ships
+  server with ten clients (#13), not over the internet (#26). The game's menu allows at most eight
+  players; the tests raised the limit by script. With ten clients and 60 ms bcmpfix kept positions
+  within 0.1–0.2 units (original: 6.2), and 94–100 % of the torpedo hits were seen by all clients
+  (original: 51 %); the host's upload was about 87 kB/s. On a dedicated server the first client's
+  ships could collide with the server's own object IDs and then stay invisible for everyone (a bug of
+  the original game, fixed in v1.7.1, #24).
+- Mixed games (#26, six players with v1.7.0, v1.6.0 and the original game): no errors in any
+  combination. Positions and torpedo reports work across bcmpfix versions if the host runs bcmpfix;
+  players without the mod keep the original errors. Phasers are synchronised only among players with
+  the same version as the host. Since v1.1.0 the host relays the received state of client ships
   instead of the host's smoothed copy (#10, see six-player results in `docs/measurements.md`).
 - Since v1.4.0 remote ships follow the velocity measured from received positions (#11): in turns
   their lateral error dropped from 0.2–0.3 to about 0.05 units and their nose from 30–40° to a few
@@ -229,7 +232,9 @@ Requirements: Windows 10/11 Pro with Windows Sandbox, Python 3.10 on the host, M
 4. Set `BCMP_SBX` to the `sbx` folder and submit jobs from the host, for example
    `python -I tools/sbx_job.py run1 --fixes on --latency 60 --jitter 20 --loss 10 --seconds 180`.
    More players: `--clients 10 --species 1,2,6,7,8,10`; a dedicated server: `--dedicated`; more
-   than eight players: `--max-players 12`. Results land in `sbx/runs/<name>/`.
+   than eight players: `--max-players 12`; another version for one instance: `--variant client2=v1.6.0`
+   (dinput.dll and bcmpfix_mp.py from `<game>/bcmpfix_variants/v1.6.0/`) or `--variant client2=off`
+   (original game). Results land in `sbx/runs/<name>/`.
 5. Compare: `python -I tools/analyze.py sbx/runs/run1`.
 
 `mptest.py` refuses to start the game outside Windows Sandbox: two windowed instances grab mouse and

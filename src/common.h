@@ -36,6 +36,7 @@ typedef struct Config {
     int phaserSync;         /* remote phaser banks fire only while their owner fires them */
     int directReports;      /* phaser reports also go straight to every modded peer (direct.c) */
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
+    int fixDedicatedIds;    /* a dedicated server numbers its objects from slot 15, not the first client's slot 0 */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */
     int qpcRebase;          /* game clock relative to process start, not boot */
@@ -123,6 +124,7 @@ void join_install(void);
 void phaser_install(void);
 void phaser_frame(int pythonReady);
 long tlog_ms(void);
+void join_frame(void);
 int net_sendto(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen);
 int direct_enabled(void);
 void direct_init(void);

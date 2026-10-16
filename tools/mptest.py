@@ -5,9 +5,13 @@ Usage: python -I mptest.py <name> [--seconds N] [--fixes on|off] [--latency MS] 
 Writes logs to E:/dev/bc/work/runs/<name>/.
 """
 import argparse
+import ctypes
+import json
 import os
+import shutil
 import subprocess
 import sys
+import threading
 import time
 
 GAME = os.environ.get('BCMP_GAME', r'E:\dev\bc\game')
@@ -49,6 +53,63 @@ def write_ini(path, fixes, rate, test):
     open(path, 'w').write('\n'.join(lines))
 
 
+# --variant ROLE=NAME: 'off' runs that instance as the original game (the DLL only serves the
+# test harness: loopback binding, network emulation, the test pilot's tick; every fix and the
+# script layer are off), 'vX.Y.Z' runs it from a copy of the game folder with that release's
+# dinput.dll and scripts/bcmpfix_mp.py (from <game>/bcmpfix_variants/vX.Y.Z/)
+VARIANT_FILES = (('dinput.dll', 'dinput.dll'), ('bcmpfix_mp.py', os.path.join('scripts', 'bcmpfix_mp.py')))
+
+
+def variant_game(name):
+    """<game>_<name>: hard links to every file of the game folder, except the mod's own files,
+    which come from the variant (the .pyc of the mod script is left out, the game compiles it)."""
+    src = os.path.join(GAME, 'bcmpfix_variants', name)
+    if not os.path.isfile(os.path.join(src, 'dinput.dll')):
+        sys.exit('variant %s: %s has no dinput.dll' % (name, src))
+    dst = GAME.rstrip('\\/') + '_' + name
+    if os.path.isdir(dst):
+        shutil.rmtree(dst)
+    own = {os.path.normcase(p) for _, p in VARIANT_FILES} | {os.path.normcase(os.path.join('scripts', 'bcmpfix_mp.pyc'))}
+    for root, dirs, files in os.walk(GAME):
+        rel = os.path.relpath(root, GAME)
+        if rel.split(os.sep)[0] == 'bcmpfix_variants':
+            dirs[:] = []
+            continue
+        os.makedirs(os.path.join(dst, rel), exist_ok=True)
+        for f in files:
+            r = os.path.normpath(os.path.join(rel, f))
+            if os.path.normcase(r) in own:
+                continue
+            try:
+                os.link(os.path.join(root, f), os.path.join(dst, r))
+            except OSError:
+                shutil.copy2(os.path.join(root, f), os.path.join(dst, r))
+    for s, d in VARIANT_FILES:
+        if os.path.isfile(os.path.join(src, s)):
+            shutil.copy2(os.path.join(src, s), os.path.join(dst, d))
+    return dst
+
+
+class MEMORYSTATUSEX(ctypes.Structure):
+    _fields_ = [('dwLength', ctypes.c_ulong), ('dwMemoryLoad', ctypes.c_ulong), ('ullTotalPhys', ctypes.c_ulonglong),
+                ('ullAvailPhys', ctypes.c_ulonglong), ('ullTotalPageFile', ctypes.c_ulonglong),
+                ('ullAvailPageFile', ctypes.c_ulonglong), ('ullTotalVirtual', ctypes.c_ulonglong),
+                ('ullAvailVirtual', ctypes.c_ulonglong), ('ullAvailExtendedVirtual', ctypes.c_ulonglong)]
+
+
+def log_memory(path, stop):
+    """every 5 s: free physical memory and commit charge of the machine (memory.txt)"""
+    with open(path, 'w') as f:
+        while not stop.is_set():
+            m = MEMORYSTATUSEX()
+            m.dwLength = ctypes.sizeof(m)
+            if ctypes.windll.kernel32.GlobalMemoryStatusEx(ctypes.byref(m)):
+                f.write('%d load=%d%% free_mb=%d commit_free_mb=%d\n' % (
+                    int(time.time() * 1000), m.dwMemoryLoad, m.ullAvailPhys // 2 ** 20, m.ullAvailPageFile // 2 ** 20))
+                f.flush()
+            stop.wait(5)
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument('name')
@@ -62,6 +123,8 @@ def main():
     ap.add_argument('--clients', type=int, default=1, help='number of client instances (1-15)')
     ap.add_argument('--dedicated', action='store_true', help='the host is a dedicated server (-Dedicated, no ship)')
     ap.add_argument('--max-players', type=int, default=0, help='the host raises the player limit (menu: 2-8)')
+    ap.add_argument('--variant', action='append', default=[],
+                    help="ROLE=NAME: 'off' (original game) or a release vX.Y.Z for one instance, e.g. client2=v1.6.0")
     ap.add_argument('--solo', action='store_true')
     ap.add_argument('--set', action='append', default=[], help='override a [Fixes] key, e.g. CorrectionGainPercent=300')
     ap.add_argument('--set-host', action='append', default=[], help='like --set, host only')
@@ -70,7 +133,8 @@ def main():
     ap.add_argument('--raise-once', action='store_true', help='clients raise once in a script event handler')
     ap.add_argument('--test-infopane', action='store_true', help='call RebuildInfoPane once with no info pane')
     ap.add_argument('--kick', default='', help='AT:SPEED[:EVERY] - every player kicks its own ship sideways/backwards (player i at AT+4*i s), e.g. 30:20:30')
-    ap.add_argument('--damage', default='', help='AT:FRACTION[:hull] - host damages its impulse engines (or the hull of all other ships) once, e.g. 60:0.2')
+    ap.add_argument('--damage', default='', help='AT:FRACTION[:hull[:EVERY]] - host damages its impulse engines (or the hull of all other ships) once '
+                         'or every EVERY s, e.g. 60:0.2 or 40:0.05:hull:30')
     a = ap.parse_args()
     if not IN_SANDBOX and os.environ.get('BCMP_ALLOW_HOST') != '1':
         sys.exit('refusing to start the game outside Windows Sandbox (set BCMP_ALLOW_HOST=1 to override)')
@@ -78,6 +142,8 @@ def main():
     os.makedirs(out, exist_ok=True)
     species = a.species.split(',')
     procs = []
+    stop_mem = threading.Event()
+    threading.Thread(target=log_memory, args=(os.path.join(out, 'memory.txt'), stop_mem), daemon=True).start()
     # (role, name, bind address, seed); each client gets its own loopback IP because
     # every instance binds UDP 22101; the first client keeps the 2-player names
     roles = [('host', NAMES[0], HOST_ADDR, 12345)]
@@ -88,6 +154,17 @@ def main():
         roles = roles[:1]
     stagger = 3 if len(roles) > 2 else 0
     many = len(roles) > 6
+    variants = dict(kv.split('=', 1) for kv in a.variant)
+    unknown = set(variants) - {r[0] for r in roles}
+    if unknown:
+        sys.exit('--variant for unknown roles: %s' % ', '.join(sorted(unknown)))
+    games = {}
+    for name in sorted(set(variants.values()) - {'off'}):
+        t0 = time.time()
+        games[name] = variant_game(name)
+        print('variant', name, 'game folder', games[name], '%.1f s' % (time.time() - t0), flush=True)
+    json.dump({r[0]: variants.get(r[0], 'off' if a.fixes == 'off' else 'current') for r in roles},
+              open(os.path.join(out, 'variants.json'), 'w'), indent=1)
     for i, (role, name, bind, seed) in enumerate(roles):
         sp = species[i % len(species)]
         if IN_SANDBOX and many:
@@ -97,7 +174,9 @@ def main():
         else:
             x, y = 2900 + (i % 2) * 680, 650 + (i // 2) * 200
         ini = os.path.join(out, 'bcmpfix_%s.ini' % role)
-        write_ini(ini, a.fixes, a.rate,
+        var = variants.get(role, '')
+        game = games.get(var, GAME)
+        write_ini(ini, 'off' if var == 'off' else a.fixes, a.rate,
                   {'x': x, 'y': y, 'lat': a.latency, 'jit': a.jitter, 'loss': a.loss, 'bind': bind,
                    'set': a.set + (a.set_host if role == 'host' else a.set_client), 'tset': a.test_set})
         env = dict(os.environ)
@@ -120,6 +199,7 @@ def main():
             'BCMP_DAMAGE_AT': a.damage.split(':')[0] if a.damage else '-1',
             'BCMP_DAMAGE': a.damage.split(':')[1] if ':' in a.damage else '0.2',
             'BCMP_DAMAGE_KIND': a.damage.split(':')[2] if a.damage.count(':') >= 2 else 'impulse',
+            'BCMP_DAMAGE_EVERY': a.damage.split(':')[3] if a.damage.count(':') >= 3 else '0',
             'BCMP_DEDICATED': '1' if a.dedicated and role == 'host' else '0',
             'BCMP_MAX_PLAYERS': str(a.max_players) if role == 'host' else '0',
         })
@@ -133,8 +213,8 @@ def main():
         else:
             gargs = ['-Client', '-IP', HOST_ADDR, '-Name', name]
         env['BCMP_CMDLINE'] = '1'
-        procs.append(subprocess.Popen([os.path.join(GAME, 'stbc.exe'), '-ForceWindowed'] + gargs, cwd=GAME, env=env))
-        print('started', role, procs[-1].pid, flush=True)
+        procs.append(subprocess.Popen([os.path.join(game, 'stbc.exe'), '-ForceWindowed'] + gargs, cwd=game, env=env))
+        print('started', role, procs[-1].pid, var or a.fixes, flush=True)
         time.sleep(6 if role == 'host' else stagger)
     deadline = time.time() + a.seconds + 30 + stagger * len(roles)
     while time.time() < deadline and any(p.poll() is None for p in procs):
@@ -154,6 +234,7 @@ def main():
                     f.write(r.stdout + r.stderr + '\n----\n')
                     time.sleep(0.5)
             p.kill()
+    stop_mem.set()
     print('done', [p.returncode for p in procs])
 
 

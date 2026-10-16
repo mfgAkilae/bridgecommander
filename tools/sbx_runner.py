@@ -73,7 +73,10 @@ def run_steps(job, status):
     with open(os.path.join(out, 'steps_output.txt'), 'w') as log:
         for i, st in enumerate(job['steps']):
             for c in st.get('pre', []):
-                r = subprocess.run(c, shell=True, capture_output=True, text=True)
+                try:
+                    r = subprocess.run(c, shell=True, capture_output=True, text=True, timeout=st.get('pre_timeout', 120))
+                except subprocess.TimeoutExpired:
+                    r = subprocess.CompletedProcess(c, -9, '', 'timeout')
                 log.write('step %d pre %s -> rc=%s %s %s\n' % (i, c, r.returncode, r.stdout.strip(), r.stderr.strip()))
             p = subprocess.Popen(st['cmd'], cwd=st.get('cwd'))
             t0 = time.time()
@@ -109,6 +112,8 @@ def run_job(path, status):
         args.append('--dedicated')
     if job.get('max_players'):
         args += ['--max-players', str(job['max_players'])]
+    for kv in job.get('variant', []):
+        args += ['--variant', kv]
     if job.get('raise_once'):
         args.append('--raise-once')
     if job.get('test_infopane'):

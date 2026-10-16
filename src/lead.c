@@ -23,6 +23,7 @@ static BYTE *g_tramp;
 static struct {
     DWORD id;
     int ms;
+    double used; /* a full table drops the entry set longest ago (respawns are new ships, issue #25) */
 } g_lead[MAXLEAD];
 
 void lead_set(DWORD objId, int ms)
@@ -35,15 +36,19 @@ void lead_set(DWORD objId, int ms)
     for (i = 0; i < MAXLEAD; i++) {
         if (g_lead[i].id == objId) {
             g_lead[i].ms = ms;
+            g_lead[i].used = now_sec();
             return;
         }
         if (free_ < 0 && g_lead[i].id == 0)
             free_ = i;
     }
     if (free_ < 0)
-        free_ = (int)(objId % MAXLEAD);
+        for (i = free_ = 0; i < MAXLEAD; i++)
+            if (g_lead[i].used < g_lead[free_].used)
+                free_ = i;
     g_lead[free_].id = objId;
     g_lead[free_].ms = ms;
+    g_lead[free_].used = now_sec();
 }
 
 /* Latency of torpedo fire messages from a ship (script: RTT/2 per hop), used to advance
@@ -51,6 +56,7 @@ void lead_set(DWORD objId, int ms)
 static struct {
     DWORD id;
     int ms;
+    double used;
 } g_fireLead[MAXLEAD];
 
 void lead_set_fire(DWORD objId, int ms)
@@ -63,15 +69,19 @@ void lead_set_fire(DWORD objId, int ms)
     for (i = 0; i < MAXLEAD; i++) {
         if (g_fireLead[i].id == objId) {
             g_fireLead[i].ms = ms;
+            g_fireLead[i].used = now_sec();
             return;
         }
         if (free_ < 0 && g_fireLead[i].id == 0)
             free_ = i;
     }
     if (free_ < 0)
-        free_ = (int)(objId % MAXLEAD);
+        for (i = free_ = 0; i < MAXLEAD; i++)
+            if (g_fireLead[i].used < g_fireLead[free_].used)
+                free_ = i;
     g_fireLead[free_].id = objId;
     g_fireLead[free_].ms = ms;
+    g_fireLead[free_].used = now_sec();
 }
 
 int lead_get_fire(DWORD objId)

@@ -5,7 +5,7 @@
   <VideoInput>Disable</VideoInput>
   <ClipboardRedirection>Disable</ClipboardRedirection>
   <PrinterRedirection>Disable</PrinterRedirection>
-  <MemoryInMB>8192</MemoryInMB>
+  <MemoryInMB>16384</MemoryInMB>
   <MappedFolders>
     <MappedFolder>
       <HostFolder>C:\path\to\game</HostFolder>

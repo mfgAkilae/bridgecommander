@@ -13,6 +13,16 @@
  * set, the message is read into that ship again (the game's own reader, without the
  * Python model setup), which also puts it into the set that now exists.
  *
+ * Dedicated server object IDs (original-game bug, issue #24): every machine numbers the
+ * objects it creates from a range of its player slot, (slot << 18) + 0x3FFFFFFF, with the
+ * counter in UtopiaModule+0x8C (0x00445F70 skips IDs in use) and the slot in +0x84. A
+ * dedicated server has no player slot and keeps slot 0, which the first client gets. The
+ * host's own objects (the torpedo copies of everybody's shots) then use the first client's
+ * range, and a ship that client creates later is refused by the host's object reader when
+ * its ID is in use there: nobody sees the ship, and the client gets no state updates.
+ * Fix (FixDedicatedObjectIds=1): a dedicated server uses slot 15 (the game has 16 player
+ * slots, 0x006A19C0; the menu allows 8 players), with its counter moved into that range.
+ *
  * Logs (test mode / Verbose): MultiplayerGame::ReceiveMessageHandler (0x0069F2A0)
  * processes game messages only once the game has its mission (game+0x70, and +0x3C of
  * that) and drops earlier ones without a trace; this module logs them, the object
@@ -73,6 +83,35 @@ static int place_orphan(BYTE *obj, BYTE *data, int len)
     return *(void **)(obj + 0x20) != NULL;
 }
 
+#define ADDR_UTOPIA 0x0097FA00 /* UtopiaModule */
+#define UT_SLOT 0x84           /* local player slot: the range of new object IDs */
+#define UT_IS_CLIENT 0x88
+#define UT_IS_MP 0x89
+#define UT_IS_HOST 0x8A
+#define UT_NEXT_ID 0x8C        /* next object ID */
+#define DEDICATED_SLOT 15
+#define SLOT_BASE(s) (((DWORD)(s) << 18) + 0x3FFFFFFFu)
+
+/* every frame: a dedicated server numbers its objects from slot 15 */
+void join_frame(void)
+{
+    static int s_logs;
+    BYTE *u = (BYTE *)ADDR_UTOPIA;
+    int slot = *(int *)(u + UT_SLOT);
+    DWORD next, off;
+    if (!g_cfg.fixDedicatedIds || !u[UT_IS_MP] || !u[UT_IS_HOST] || u[UT_IS_CLIENT] || slot == DEDICATED_SLOT)
+        return;
+    next = *(DWORD *)(u + UT_NEXT_ID);
+    off = (slot >= 0 && slot < 16) ? next - SLOT_BASE(slot) : 0;
+    if (off >= 0x40000)
+        off = 0;
+    *(int *)(u + UT_SLOT) = DEDICATED_SLOT;
+    *(DWORD *)(u + UT_NEXT_ID) = SLOT_BASE(DEDICATED_SLOT) + off;
+    if (s_logs++ < 5)
+        logf("dedicated server: object IDs from slot %d (was %d, next id %lu -> %lu)", DEDICATED_SLOT, slot, next,
+             SLOT_BASE(DEDICATED_SLOT) + off);
+}
+
 static BYTE *__cdecl hk_Create(BYTE *data, int len)
 {
     BYTE *o;
@@ -89,6 +128,9 @@ static BYTE *__cdecl hk_Create(BYTE *data, int len)
         }
     }
     o = ((PFN_Create)o_Create)(data, len);
+    if (!o && len >= 8)
+        logf("object from network NOT created: id=%lu (%s)", *(DWORD *)(data + 4),
+             ((PFN_FindObject)ADDR_FIND_OBJECT)(0, *(DWORD *)(data + 4)) ? "the ID is in use here" : "reader failed");
     if (g_cfg.testMode || g_cfg.verbose)
         logf("object from network: %d bytes -> %s id=%lu type=0x%x set=%s", len, o ? "created" : "NOT created",
              o ? *(DWORD *)(o + 4) : 0, o ? ((PFN_MsgType)(*(void ***)o)[1])(o, 0) : 0,

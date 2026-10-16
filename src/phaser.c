@@ -65,6 +65,7 @@ static struct {
     DWORD stopOn;          /* banks whose beam was on an object when the owner stopped it */
     DWORD seq;             /* sequence number of the last report applied (direct or relayed) */
     int hasSeq;
+    double used;           /* last report or frame with the ship alive: a full table drops the oldest */
     double retry[32];      /* next start attempt per bank (a failed Fire is retried every 100 ms) */
     unsigned long fed[32]; /* frame of the last Fire call (the weapon system feeds firing banks) */
 } g_remote[MAXREMOTE];
@@ -125,6 +126,7 @@ static void enforce_remote(void)
         ship = ((PFN_FindObject)ADDR_FIND_OBJECT)(0, g_remote[s].ship);
         if (!ship || !((PFN_IsA)(*(void ***)ship)[2])(ship, 0, TYPE_SHIP) || ship == local_ship())
             continue;
+        g_remote[s].used = t;
         sys = *(BYTE **)(ship + SHIP_PHASERS);
         if (!sys)
             continue;
@@ -184,19 +186,25 @@ static int bank_index(BYTE *ship, BYTE *bank)
 
 static int remote_slot(DWORD ship, int create)
 {
-    int i, free_ = -1;
+    int i, free_ = -1, oldest = 0;
     for (i = 0; i < MAXREMOTE; i++) {
-        if (g_remote[i].ship == ship)
+        if (g_remote[i].ship == ship) {
+            if (create)
+                g_remote[i].used = now_sec();
             return i;
+        }
         if (free_ < 0 && !g_remote[i].ship)
             free_ = i;
+        if (g_remote[i].used < g_remote[oldest].used)
+            oldest = i;
     }
     if (!create)
         return -1;
-    if (free_ < 0)
-        free_ = (int)(ship % MAXREMOTE);
+    if (free_ < 0) /* every respawn is a new ship: drop the entry unused longest (issue #25) */
+        free_ = oldest;
     memset(&g_remote[free_], 0, sizeof(g_remote[0]));
     g_remote[free_].ship = ship;
+    g_remote[free_].used = now_sec();
     return free_;
 }
 

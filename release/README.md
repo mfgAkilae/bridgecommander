@@ -30,9 +30,9 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
 ### Requirements and compatibility
 
 - **Version:** The mod is written for `stbc.exe` version 1.1. It checks the original bytes before each change. If a location does not match, for example in another program version, the mod skips that change and writes `NOT applied` to the log. The game then runs unchanged.
-- **Mixed sessions:** Players without the mod can join. They keep the original behaviour, including the known errors.
+- **Mixed sessions:** Players without the mod can join. They keep the original behaviour, including the known errors, also for the ships of bcmpfix players. bcmpfix players see their ships better (tests with six players: 0.5 units off instead of about 5).
 - **Host without the mod:** Torpedo and phaser synchronisation only turn on when the host runs the mod too. The mod detects this automatically.
-- **Older bcmpfix versions:** The phaser reports of v1.7.0 have a new format. Players with v1.6.0 or older keep their own phaser decisions, and their phasers are not synchronised with v1.7.0 players; all players should update.
+- **Older bcmpfix versions:** Positions and torpedoes work with v1.6.0 players too. Phasers are synchronised only among players with the same phaser report format (v1.7.x, or v1.6.0), and only if the host has it as well; all players should update.
 - **Direct phaser reports:** Players who run bcmpfix v1.7.0 send their phaser reports to each other directly (UDP on the game's port, 22101), not only through the host. For this the host tells each of them the other players' IP addresses and ports. If a router or firewall drops these packets, the reports still arrive through the host, only later. `DirectPhaserReports=0` in `bcmpfix.ini` turns this off.
 - **Other mods:** Mods that ship their own `dinput.dll` are not compatible with bcmpfix.
 - **Windows 10/11:** A graphics wrapper such as dgVoodoo2 (`DDraw.dll` + `D3DImm.dll`) is still recommended. It is independent of bcmpfix.
@@ -94,6 +94,7 @@ Since v1.7.0 the beams also start almost together with the shooter's: about 0.06
 
 - **Joining a running game:** If a player's ship arrived while you were still joining, the game's own mission script failed. In windowed mode the game then froze. bcmpfix skips the failing step until the game is ready for it.
 - **Invisible ship after joining:** If another player spawned a ship while you were joining, that ship could stay invisible on your screen for the whole game. bcmpfix shows it when the host sends it again during your join.
+- **Dedicated server:** On a dedicated server the first player's new ship could be refused by the server and stay invisible for everybody, and that player got no more updates of the other ships. The server numbered its own objects (copies of torpedoes) in the first player's range. Since v1.7.1 it uses a range no player gets.
 - **Script errors in windowed mode:** Any script error opened the "TG Python Exception Debug Console" in a separate window, and the game waited for keyboard input there. bcmpfix writes the error to `bcmpfix.log` and the game continues, as it does in fullscreen.
 
 You can turn off each fix separately in `bcmpfix.ini`. The file has comments.

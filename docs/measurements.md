@@ -769,3 +769,118 @@ Findings:
   respawns can reach it.
 - The original game with ten clients: half of the torpedo hits were missing on at least one client,
   and 43 % of the clients' phaser beams did no damage on the host.
+
+## Issue #26: mixed games (v1.7.0, v1.6.0 and the original game)
+
+Six players, 60 ms ±20 ms, 1 % loss, 180 s. The test harness now runs each instance with its own
+version (`mptest.py --variant ROLE=NAME`): `vX.Y.Z` starts it from a copy of the game folder (hard
+links) with that release's `dinput.dll` and `scripts/bcmpfix_mp.py`, taken from the release zip;
+`off` is the original game as in every other "original" run, i.e. the DLL only serves the test
+harness (loopback binding, simulated network, the test pilot's tick) with every fix and the script
+layer off. `tools/mixed.py` reports positions, torpedo hits and phaser beams by the versions of the
+two instances involved, while all six are in the game.
+
+Clients: two with v1.7.0, two with v1.6.0, one with the original game; two runs per host version,
+the second with the versions on other players (and so other ship classes). Mean / 95th percentile in
+game units:
+
+| Positions, owner → viewer | host v1.7.0 | host v1.6.0 | host original |
+|---|---|---|---|
+| bcmpfix → bcmpfix (either version) | 0.06–0.07 / 0.13–0.15 | 0.06–0.08 / 0.12–0.15 | 2.39–3.35 / 4.35–6.07 |
+| original → bcmpfix | 0.51 / 0.76–0.77 | 0.51 / 0.73–0.76 | 1.57 / 4.12–4.13 |
+| bcmpfix → original | 2.57–2.58 / 4.68–5.77 | 2.34–2.96 / 4.49–5.38 | 3.69–5.15 / 9.05–11.71 |
+| original → original | – | – | 3.02 / 6.71 |
+
+All six with the original game: 5.39 / 12.13.
+
+| Torpedo hits of the host also shown by a client | host v1.7.0 | host v1.6.0 | host original |
+|---|---|---|---|
+| client v1.7.0 | 100 % | 99.7 % | 93.8 % |
+| client v1.6.0 | 100 % | 100 % | 93.3 % |
+| client original | 89.9 % | 69.6 % | 50.9 % |
+
+All six with the original game: 83.9 %. Shield or hull agreed in 96–99 % of the shown hits.
+
+| Phaser beams also shown by another peer, shooter → peer | host v1.7.0 | host v1.6.0 | host original |
+|---|---|---|---|
+| v1.7.0 → v1.7.0 | 99.8 % (banks 100 %) | 90.7 % | 70.0 % |
+| v1.6.0 → v1.6.0 | 88.7 % | 100 % (banks 96.2 %) | 25.4 % |
+| between v1.7.0 and v1.6.0 | 87.1–90.4 % | 89.9–91.3 % | 23.7–69.2 % |
+| with the original game | 43.5–88.6 % | 69.9–88.3 % | 17.8–84.1 % |
+| client beams shown by the host (damage): v1.7.0 / v1.6.0 / original shooter | 100 / 93.5 / 91.4 % | 94.8 / 100 / 89.0 % | 74.2 / 30.5 / 78.5 % |
+
+All six with the original game: 69.5 % of the beams, 76.6 % of the client beams on the host.
+
+What this shows:
+
+- Mixed games run: no crash, hang, script error or exception in any of the seven runs. The phaser
+  reports of v1.6.0 (`MSG_BASE + 4`) and v1.7.0 (`+ 5`) ignore each other, and the direct phaser
+  reports only started between a v1.7.0 host and its v1.7.0 clients.
+- Positions: a bcmpfix player sees every ship better, also an original player's (0.51 instead of
+  about 5 with a bcmpfix host). An original player keeps the original errors, also for bcmpfix ships
+  (2.3–3.0). A host without bcmpfix cannot relay the clients' received state, and everybody sees the
+  other clients 1.6–5 units off.
+- Torpedoes: v1.6.0 and v1.7.0 clients take the hit reports of either host version; with a host
+  without bcmpfix there are no reports and each client decides itself (93 % shown). Original
+  clients showed 51–90 % of the host's hits (all-original game: 84 %); with one original client per
+  run these numbers rest on 112–148 hits each.
+- Phasers: the hit authority works only among machines with the same version, including the host,
+  which relays the clients' reports. With another host version or a host without bcmpfix, each
+  machine decides itself, as in the original game.
+- Recommendation: everybody, the host above all, should run the same bcmpfix version.
+
+## Issues #24 and #25 (v1.7.1)
+
+**#24, dedicated server object IDs.** `FixDedicatedObjectIds`: when the DLL finds the game running as
+a dedicated server (UtopiaModule: multiplayer, host, not a client), it sets the server's slot to 15
+and moves its object counter into that range. In a dedicated run with ten clients and all hulls at
+5 % after 40 s the server's torpedo copies got IDs from 1077673983 on (slot 15) instead of 1073741823
+(slot 0, the first client's), and all 197 ships from network messages were created; phaser beams
+shown by the other peers 100 %, positions 0.11 / 0.24. The server switched twice at its start (the
+game set the slot back to 0 once).
+
+**#25, tables per remote ship.** The phaser reports, the latency per ship and the orientation
+tracking now give a new ship the entry unused longest when the table is full (the velocity tracking
+already did); the velocity and orientation tracking also start over when a proxy has had no update
+for 10 s (a new proxy at the address of a deleted one). Six players with all hulls at 1 % every 30 s
+from 40 s on (many respawns), with test builds whose tables hold 6 entries instead of 32 or 64,
+positions per minute (mean / 95th percentile):
+
+| | 0–60 s | 60–120 s | 120–180 s | 180–228 s | ship IDs |
+|---|---|---|---|---|---|
+| v1.7.0 code | 0.06 / 0.14 | 0.06 / 0.13 | 0.10 / 0.46 | 0.15 / 0.51 | 11 |
+| v1.7.1 code | 0.06 / 0.14 | 0.06 / 0.13 | 0.06 / 0.13 | 0.08 / 0.17 | 14 |
+
+Once the small tables were full, the old code gave new ships the entries of live ones (by ID modulo
+the size), and their tracking started over again and again. With the real sizes a five-minute run of
+ten clients with hull damage every 25 s reached only 13–16 ship IDs (the waves rarely killed), so the
+tables did not fill; three instances of the v1.7.0 run stalled for about 9 s near its end, which
+lowered its last minute.
+
+## v1.7.1 release check
+
+Exact release build, default settings. Mean / 95th percentile, backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.14, 0.0 % | 0.04 / 0.09, 0.0 % | – | 4 of 4 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.20, 0.0 % | 0.07 / 0.15, 0.0 % | – | 4 of 4 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.14, 0.0 % | 0.05 / 0.11, 0.0 % | 0.07 / 0.15, 0.0 % | 56 of 56 |
+| 6 players, 60 ms (second run) | 0.06 / 0.12, 0.0 % | 0.04 / 0.09, 0.0 % | 0.06 / 0.13, 0.0 % | 87 of 89 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.13, 0.0 % | 0.05 / 0.10, 0.0 % | 0.07 / 0.14, 0.0 % | 68 of 68 |
+| dedicated server + 10 clients (run 1) | – | 0.12 / 0.23, 0.2 % | (one client stalled 47 s) | 77 of 145 |
+| dedicated server + 10 clients (run 2) | – | 0.09 / 0.18, 0.2 % | 0.13 / 0.27, 0.3 % | 145 of 153 |
+
+Phasers, six players: beams shown by the other peers 99.6–100 %, start delay 58–59 ms. Dedicated
+runs: the server numbered its objects from slot 15, no object was refused. Mixed game (v1.7.1 host,
+two v1.7.0 and two v1.7.1 clients, one original): v1.7.x players saw each other with 0.06–0.08,
+phaser beams 100 %, torpedo hits 100 %; the original player as before. Torpedo hits: client − host
+−71, −62, −72 ms (median). Kick test: peak error median 3.4 units, max 6.4. Join test: every client
+saw every ship. Installer update from v1.7.0 tested. No crashes, no script errors.
+
+Stalls (#27): in dedicated runs with ten clients one client instance stalled for seconds (under 20 frames
+per 5 s) in 4 of 10 runs with the v1.7.1 code and in 4 of 9 runs with v1.7.0 (minimum 0–17.8 frames/s
+per 5 s, against 50–60 normally). A watchdog of the test build (no frame for 2 s: sample the main thread)
+found it busy in the game's code, not in a driver. The sandbox renders on the RTX 3080 Ti (DXGI
+adapter 1 in the sandbox; 64–66 % 3D load with eleven instances), and 13 GB of 16 GB stayed free
+(the sandbox had 8 GB before; the runs from the stall checks on use 16 GB).

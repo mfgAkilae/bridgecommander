@@ -30,6 +30,7 @@ double __cdecl cos(double);
 #define MAX_RATE 3.0f           /* rad/s */
 #define MAX_HORIZON 0.5f        /* s, curved part of the extrapolation */
 
+#define STALE_SLOT_S 10.0f /* no update for this long: the entry belongs to a deleted proxy */
 #define MAXSHIPS 64
 static struct {
     BYTE *ai;
@@ -58,8 +59,12 @@ static int slot_of(BYTE *ai, int create)
 {
     int i, freeSlot = -1, oldest = 0;
     for (i = 0; i < MAXSHIPS; i++) {
-        if (g_ship[i].ai == ai)
+        if (g_ship[i].ai == ai) {
+            /* a new proxy at the address of a deleted one (no update for long): start over (#25) */
+            if (create && g_ship[i].gotAt > 0.0f && game_time() - g_ship[i].gotAt > STALE_SLOT_S)
+                break;
             return i;
+        }
         if (freeSlot < 0 && !g_ship[i].ai)
             freeSlot = i;
         if (g_ship[i].gotAt < g_ship[oldest].gotAt)
@@ -67,7 +72,9 @@ static int slot_of(BYTE *ai, int create)
     }
     if (!create)
         return -1;
-    if (freeSlot < 0) /* reuse the slot that went longest without an update (torpedoes, dead ships) */
+    if (i < MAXSHIPS)
+        freeSlot = i;
+    else if (freeSlot < 0) /* reuse the slot that went longest without an update (torpedoes, dead ships) */
         freeSlot = oldest;
     memset(&g_ship[freeSlot], 0, sizeof(g_ship[0]));
     g_ship[freeSlot].ai = ai;

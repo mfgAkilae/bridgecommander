@@ -523,7 +523,12 @@ def DamageEnginesOnce(pPlayer):
 		return
 	if (Now() - g_fStart) / 1000.0 < g_fDamageAt:
 		return
-	g_fDamageAt = -1.0
+	# BCMP_DAMAGE_EVERY=<s>: repeat it every <s> seconds (many deaths and respawns)
+	fEvery = string.atof(Env('BCMP_DAMAGE_EVERY', '0'))
+	if fEvery > 0:
+		g_fDamageAt = g_fDamageAt + fEvery
+	else:
+		g_fDamageAt = -1.0
 	fFrac = string.atof(Env('BCMP_DAMAGE', '0.2'))
 	sKind = Env('BCMP_DAMAGE_KIND', 'impulse')
 	if sKind == 'hull':
