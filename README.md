@@ -32,7 +32,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 |---|---|---|---|
 | Position error in a duel at 60 ms (host ship / client ship) | 3.40 / 2.44 | 0.06 / 0.04 | v1.0–v1.4 |
 | Teleports after packet loss (largest single error) | 41 units | 1.6 | v1.0 |
-| Position error with ten clients | 6.2 units | 0.1–0.2 | v1.0–v1.4 |
+| Position error with ten clients | 5.7 units | 0.1–0.2 | v1.0–v1.4 |
 | Correction time constant / dead band | 1 s / 0.5 units | 0.2 s / 0 | v1.0 |
 | Turns: sideways error / nose off the reported direction | 0.2–0.3 / 30–40° | ≈0.05 / a few ° | v1.4 (#11) |
 | Knockback: a hit pushes a ship off its nose | up to 40 units, seconds | max 5.4, at once | v1.3 (#19) |
@@ -46,7 +46,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Problem | Before | After | Version |
 |---|---|---|---|
 | Hits seen by one player only (duel, 60 ms) | 7 of 15 | 0 of 5 | v1.0–v1.3 |
-| Hits seen by all ten clients | 51 % | 94–100 % | v1.0–v1.5 |
+| Hits seen by all ten clients | 28 % | 94–100 % | v1.0–v1.5 |
 | When a client shows a hit | one latency after the host | ≈65 ms before the host | v1.5 (#12) |
 | Torpedoes of other players left the tube sideways, without launch sound | flags swapped | shooter's values | v1.3 (#8, #9) |
 | Starbase mission: hits on the host seen by all clients | 87.4 % | 96.8 % | v1.7.4 (#31) |
@@ -221,9 +221,9 @@ Rubber-banding (100 ms steps in which a remote ship moves back against its direc
 six players, other clients' ships: 11.3 % in the original, 9.3 % with v1.1.0, 0.9 % with v1.2.0.
 
 Dedicated server with ten clients (eleven instances, 60 ms ±20 ms, 1 % loss): other clients' ships
-were 6.24 units off in the original and 0.10 with v1.7.0; torpedo hits seen by all ten clients: 72 of
-141 (original), 125 of 127 and 149 of 149 (v1.7.0); client phaser beams without damage on the host:
-43 % (original), 0.3–3 % (v1.7.0).
+were 5.71 units off in the original and 0.10 with v1.7.0; torpedo hits seen by all ten clients: 42 of
+149 (original), 125 of 127 and 149 of 149 (v1.7.0); client phaser beams without damage on the host:
+36 % (original), 0.3–3 % (v1.7.0).
 
 Full tables and method: [`docs/measurements.md`](docs/measurements.md).
 
@@ -234,8 +234,8 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Tested in one sandbox with up to eleven players: a dedicated server with ten clients and a listen
   server with ten clients (#13), not over the internet (#26). The game's menu allows at most eight
   players; the tests raised the limit by script. With ten clients and 60 ms bcmpfix kept positions
-  within 0.1–0.2 units (original: 6.2), and 94–100 % of the torpedo hits were seen by all clients
-  (original: 51 %); the host's upload was about 87 kB/s. On a dedicated server the first client's
+  within 0.1–0.2 units (original: 5.7), and 94–100 % of the torpedo hits were seen by all clients
+  (original: 28 %); the host's upload was about 87 kB/s. On a dedicated server the first client's
   ships could collide with the server's own object IDs and then stay invisible for everyone (a bug of
   the original game, fixed in v1.7.1, #24). In big games the player who joined first froze for
   seconds, up to a minute: the combat music's range condition doubled its event handlers with every

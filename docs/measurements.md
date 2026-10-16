@@ -13,6 +13,11 @@
   remote view of a ship with its owner's position at the same moment.
 - "original" runs use the same DLL with all fixes turned off (`FIXES_OFF` in `tools/mptest.py`), so
   only the network emulation and the test pilot are active. "bcmpfix" runs use the release defaults.
+  Until 16.10.2026 `FIXES_OFF` listed only the options of v1.2: from v1.3.0 on, the "original" runs
+  still had the triple update distances, the shooter's values for remote torpedo spawns
+  (`SymmetricTorpedoSpawn`) and the ghost-ship fix on, from v1.7.3 also velocity tracking. The
+  baselines measured in that time (dedicated server with ten clients, mixed games) were measured
+  again with every fix off; the sections say which numbers are new.
 
 Metrics:
 
@@ -714,13 +719,19 @@ Positions (mean / 95th percentile in game units, backward steps), torpedo hits:
 
 | Run | Host sees clients | Clients see clients | Torpedo hits on the host seen by all ten clients | Clients − host (median) |
 |---|---|---|---|---|
-| dedicated, original game (`--fixes off`), 60 ms ±20 ms, 1 % loss | 2.38 / 5.38, 0.7 % | 6.24 / 12.15, 3.9 % | 72 of 141 | +176 ms |
+| dedicated, original game (`--fixes off`), 60 ms ±20 ms, 1 % loss (¹) | 2.14 / 4.42, 1.0 % | 5.71 / 10.84, 2.9 % | 42 of 149 | +236 ms |
 | dedicated, v1.7.0, 60 ms (run a) | 0.08 / 0.17, 0.0 % | 0.10 / 0.23, 0.1 % | 125 of 127 | −70 ms |
 | dedicated, v1.7.0, 60 ms (run b) | 0.09 / 0.18, 0.0 % | 0.55 / 0.27, 0.0 % (*) | 149 of 149 | −77 ms |
 | dedicated, v1.7.0, all hulls at 5 % after 40 s | 0.11 / 0.23, 0.1 % | 0.16 / 0.34, 0.2 % | 133 of 140 | −88 ms |
 | dedicated, v1.7.0, 150 ms ±50 ms, 5 % loss | 0.19 / 0.41, 0.2 % | 0.30 / 0.64, 1.0 % | 142 of 151 | −97 ms |
 | listen server (eleven players), v1.7.0, 60 ms | 0.13 / 0.25, 0.0 % (clients see the host: 0.16 / 0.32) | 0.17 / 0.36, 0.2 % | 116 of 116 | −98 ms |
 | six players (v1.7.0 release check, same evaluation) | 0.05 / 0.09–0.10, 0.0–0.4 % | 0.07 / 0.14–0.15, 0.0–0.4 % | 68 of 70, 77 of 77, 49 of 49 | −68 … −72 ms |
+
+(¹) Measured again on 16.10.2026 with every fix off. The first run (`--fixes off` still had the
+triple update distances, `SymmetricTorpedoSpawn` and the ghost-ship fix on) had 2.38 / 5.38 and 6.24
+/ 12.15, and 72 of 141 torpedo hits seen by all clients, most likely because of the shooter's
+torpedo values, with which the clients' copies fly like the host's. Phasers then: 69.6 %, 55.6 %,
+42.5 %, 464, 323 ms.
 
 (*) One client's respawned ship was never created on the dedicated server (see below); that client
 then got no position updates for 20 s, and its view of the others drifted by up to 117 units. Without
@@ -730,20 +741,20 @@ Phasers (in the common phase):
 
 | Run | bank firings missing on another peer | beams the shooter hit and another peer did not show | client beams without damage on the host | beams only other peers showed | start delay (median) |
 |---|---|---|---|---|---|
-| dedicated, original game | 69.6 % | 55.6 % | 42.5 % | 464 | 323 ms |
+| dedicated, original game (¹) | 67.3 % | 51.3 % | 35.6 % | 337 | 323 ms |
 | dedicated, v1.7.0, 60 ms (a, b) | 0.2 %, 2.5 % | 0.2 %, 2.7 % | 0.3 %, 3.0 % | 10, 20 | 70–72 ms |
 | dedicated, v1.7.0, hulls at 5 % | 2.1 % | 2.8 % | 0.6 % | 25 | 72 ms |
 | dedicated, v1.7.0, 150 ms, 5 % loss | 2.0 % | 3.7 % | 0.4 % | 33 | 170 ms |
 | listen server, v1.7.0, 60 ms | 0.3 % | 0.3 % | 0.6 % (host's beams a client did not show: 1.8 %) | 50 | 76 ms |
 | six players (v1.7.0 release check) | 0.0–0.1 % | 0.0–0.3 % | 0.0–0.6 % | 0–6 | 57–58 ms |
 
-The host's phaser hits (0.5 s bins) were also on the clients in 99–100 % (original: 73–74 %). The
+The host's phaser hits (0.5 s bins) were also on the clients in 99–100 % (original: 68–80 % per client). The
 direct phaser reports worked with ten clients: each client got the nine others from the host and sent
 and received its reports directly. Telemetry: a report reached another peer a median 83–89 ms after
 the owner's change (60 ms), and the bank started 1 ms after its arrival.
 
 Load: the host's upload was 86–87 kB/s as a dedicated server and 96 kB/s (peak 113) as a listen
-server with ten clients, against 26 kB/s with six players and 39 kB/s in the original game with ten
+server with ten clients, against 26 kB/s with six players and 38 kB/s in the original game with ten
 clients (bcmpfix sends state updates twice as often at close range and triples the distances of the
 update tiers). Each client received about 9 kB/s. The jumps in the table's runs (13, 0, 82, 102 and
 26 in the listen run, none with six players) came almost all in bursts: one instance saw all ships
@@ -767,8 +778,8 @@ Findings:
   at its ID modulo the table size, possibly a live ship's. A respawn creates a new ship. The runs here
   had at most 14 ship IDs with phaser reports, so it did not show; long games with many players and
   respawns can reach it.
-- The original game with ten clients: half of the torpedo hits were missing on at least one client,
-  and 43 % of the clients' phaser beams did no damage on the host.
+- The original game with ten clients: 72 % of the torpedo hits were missing on at least one client,
+  and 36 % of the clients' phaser beams did no damage on the host.
 
 ## Issue #26: mixed games (v1.7.0, v1.6.0 and the original game)
 
@@ -786,44 +797,51 @@ game units:
 
 | Positions, owner → viewer | host v1.7.0 | host v1.6.0 | host original |
 |---|---|---|---|
-| bcmpfix → bcmpfix (either version) | 0.06–0.07 / 0.13–0.15 | 0.06–0.08 / 0.12–0.15 | 2.39–3.35 / 4.35–6.07 |
-| original → bcmpfix | 0.51 / 0.76–0.77 | 0.51 / 0.73–0.76 | 1.57 / 4.12–4.13 |
-| bcmpfix → original | 2.57–2.58 / 4.68–5.77 | 2.34–2.96 / 4.49–5.38 | 3.69–5.15 / 9.05–11.71 |
-| original → original | – | – | 3.02 / 6.71 |
+| bcmpfix → bcmpfix (either version) | 0.06–0.07 / 0.12–0.15 | 0.06–0.07 / 0.12–0.15 | 2.76–3.05 / 4.99–5.61 |
+| original → bcmpfix | 0.53–0.54 / 0.70–0.72 | 0.51–0.53 / 0.71–0.73 | 1.54–1.56 / 3.64–3.78 |
+| bcmpfix → original | 2.65–2.89 / 4.98–5.88 | 2.22–2.91 / 4.51–6.26 | 4.19–4.68 / 9.39–10.88 |
+| original → original | – | – | 2.62 / 5.16 |
 
-All six with the original game: 5.39 / 12.13.
+All six with the original game: 5.12 / 10.11.
 
 | Torpedo hits of the host also shown by a client | host v1.7.0 | host v1.6.0 | host original |
 |---|---|---|---|
-| client v1.7.0 | 100 % | 99.7 % | 93.8 % |
-| client v1.6.0 | 100 % | 100 % | 93.3 % |
-| client original | 89.9 % | 69.6 % | 50.9 % |
+| client v1.7.0 | 100 % | 99.0 % | 90.1 % |
+| client v1.6.0 | 100 % | 100 % | 90.1 % |
+| client original | 77.6 % | 87.3 % | 83.0 % |
 
-All six with the original game: 83.9 %. Shield or hull agreed in 96–99 % of the shown hits.
+All six with the original game: 62.2 %. Shield or hull agreed in 92–100 % of the shown hits.
 
 | Phaser beams also shown by another peer, shooter → peer | host v1.7.0 | host v1.6.0 | host original |
 |---|---|---|---|
-| v1.7.0 → v1.7.0 | 99.8 % (banks 100 %) | 90.7 % | 70.0 % |
-| v1.6.0 → v1.6.0 | 88.7 % | 100 % (banks 96.2 %) | 25.4 % |
-| between v1.7.0 and v1.6.0 | 87.1–90.4 % | 89.9–91.3 % | 23.7–69.2 % |
-| with the original game | 43.5–88.6 % | 69.9–88.3 % | 17.8–84.1 % |
-| client beams shown by the host (damage): v1.7.0 / v1.6.0 / original shooter | 100 / 93.5 / 91.4 % | 94.8 / 100 / 89.0 % | 74.2 / 30.5 / 78.5 % |
+| v1.7.0 → v1.7.0 | 100 % (banks 99.8 %) | 91.6 % | 66.7 % |
+| v1.6.0 → v1.6.0 | 74.5 % | 100 % (banks 95.6 %) | 43.4 % |
+| between v1.7.0 and v1.6.0 | 86.3–91.7 % | 86.6–87.7 % | 43.4–65.2 % |
+| with the original game | 37.3–89.7 % | 51.6–90.9 % | 42.8–83.8 % |
+| client beams shown by the host (damage): v1.7.0 / v1.6.0 / original shooter | 100 / 90.2 / 90.4 % | 91.6 / 100 / 93.6 % | 69.6 / 50.0 / 79.7 % |
 
-All six with the original game: 69.5 % of the beams, 76.6 % of the client beams on the host.
+All six with the original game: 65.4 % of the beams, 72.9 % of the client beams on the host.
+
+The tables were measured again on 16.10.2026 with every fix off in the original instances (the first
+runs still had the triple update distances, `SymmetricTorpedoSpawn` and the ghost-ship fix on, see
+Method). The positions hardly changed. The original instances' torpedo and phaser shares vary by
+10–30 points between single runs in both measurements (client original, first runs: 89.9 %, 69.6 %,
+50.9 %); only the all-original game dropped clearly, from 83.9 % to 62.2 % of the torpedo hits, as
+in the dedicated run (#13) without the shooter's torpedo values.
 
 What this shows:
 
 - Mixed games run: no crash, hang, script error or exception in any of the seven runs. The phaser
   reports of v1.6.0 (`MSG_BASE + 4`) and v1.7.0 (`+ 5`) ignore each other, and the direct phaser
   reports only started between a v1.7.0 host and its v1.7.0 clients.
-- Positions: a bcmpfix player sees every ship better, also an original player's (0.51 instead of
-  about 5 with a bcmpfix host). An original player keeps the original errors, also for bcmpfix ships
-  (2.3–3.0). A host without bcmpfix cannot relay the clients' received state, and everybody sees the
-  other clients 1.6–5 units off.
+- Positions: a bcmpfix player sees every ship better, also an original player's (0.51–0.54 instead
+  of about 5 with a bcmpfix host). An original player keeps the original errors, also for bcmpfix
+  ships (2.2–2.9). A host without bcmpfix cannot relay the clients' received state, and everybody
+  sees the other clients 1.5–4.7 units off.
 - Torpedoes: v1.6.0 and v1.7.0 clients take the hit reports of either host version; with a host
-  without bcmpfix there are no reports and each client decides itself (93 % shown). Original
-  clients showed 51–90 % of the host's hits (all-original game: 84 %); with one original client per
-  run these numbers rest on 112–148 hits each.
+  without bcmpfix there are no reports and each client decides itself (90 % shown). Original
+  clients showed 78–87 % of the host's hits (all-original game: 62 %); with one original client per
+  run these numbers rest on 125–171 hits each.
 - Phasers: the hit authority works only among machines with the same version, including the host,
   which relays the clients' reports. With another host version or a host without bcmpfix, each
   machine decides itself, as in the original game.
@@ -1028,8 +1046,9 @@ A ship that appears on a peer starts at the position of its "object created" mes
 point, 11 units behind, until the first state update; then NetworkAI pulled it into place with its
 correction lag (time constant 0.2 s). `tools/spawn.py` measures every ship that appears on a peer
 within 5 s after its owner created it. In the 30-minute run 31 of 720 were more than 5 units off at
-first and 13 more than 20, up to 110 units. A dedicated run of the original game had 9 of 76 more
-than 5 units off and 7 more than 20 (up to 155 units; 90th percentile still 4.7 units after 1 s).
+first and 13 more than 20, up to 110 units. A dedicated run of the original game (every fix off) had
+8 of 84 more than 5 units off and 5 more than 20 (up to 137 units; 90th percentile still 3.4 units
+after 1 s).
 
 `SnapNewShips` places a proxy at its target in the first correction after its first state update
 (setting the position in the reader does not last). Dedicated server, ten clients, two AI ships,
@@ -1318,9 +1337,9 @@ eleven instances), 38–110 elsewhere; no instance stalled; at most 406 event ha
 1104 on the host that flies five AI ships (v1.7.3: 1124). Mixed game (v1.7.4 host; v1.7.3, v1.7.2
 and two v1.7.4 clients; one original): among the v1.7.x players phaser beams 100 % and bank firings
 99.6–100 %, torpedo hits 97.7–100 %, positions 0.06–0.09 (the v1.7.2 client fired no phasers, as the
-client in its place in the v1.7.3 check). The original client froze 5 s after its start in the
-game's script error console (the bug `NoScriptErrorConsole` fixes); in a run with the script before
-its last change it played and showed 87 of 95 torpedo hits. Kick test: peak error median 3.5, 90th
+client in its place in the v1.7.3 check). The original client (every fix off) showed 70 of 75 of the host's
+torpedo hits and saw the others 1.65–2.46 units off, they saw it 0.51 off (in the first run it froze
+5 s after its start in the game's script error console, the bug `NoScriptErrorConsole` fixes). Kick test: peak error median 3.5, 90th
 percentile 4.4, max 5.6 (v1.7.3: 3.4, 4.3, 5.4). Join test: every client saw every ship. Starbase
 mission with forced damage (300 s, the test pilot still playing behind the end screen): no crash. Installer: update from v1.7.3 kept the
 settings and installed the new files; a fresh install over another mod's `dinput.dll` saved it,
