@@ -45,6 +45,7 @@ Start the game as usual. The mod writes `bcmpfix.log` into the game folder. Each
   - Fix: every update carries the absolute position, and the receiver applies deltas correctly.
 - **Newly spawned ships flung away:** A newly created network ship used the whole game time as the time step of its first frame and was flung far away. This is fixed.
 - **Ships sliding into place:** A ship that appears on your screen (a player joins or respawns, an AI ship is created) started at the position in the game's "object created" message. That position can be seconds old: when you join, you get every ship at the place where it was created. The ship then slid to its real position for up to a second, in a ten-player game sometimes over 100 units. Since v1.7.3 it starts at the first position received for it (`SnapNewShips`).
+- **Respawned ships driven off:** A respawned ship could take over the measured movement of a ship that had died before, and was driven along it for a moment (in tests up to 95 units off). Since v1.7.4 every new ship starts without history.
 - **Slow correction:** Remote ships were pulled to their network position with a time constant of about 1 s. Errors below 0.5 units were not corrected at all.
   - Now: about 0.2 s, no dead band, and updates at close range twice as often (every 50 ms).
   - A ship that is ahead of its network position slows down instead of being pulled back, so it does not jump back (rubber-banding).
@@ -67,6 +68,7 @@ With bcmpfix, the host also decides what everybody sees:
 
 All players then see the same hits and misses as the host. Since v1.5.0 your computer shows a hit as soon as its own copy of the torpedo hits, at about the same moment as the shooter; the host's report confirms it a moment later.
 
+- **Near large objects (starbase mission):** Every computer flies its own copy of a torpedo, so near the starbase one copy could touch the starbase while the host's copy flew on and hit a ship. Your computer then showed a starbase hit the host never had, and could not show the host's real hit. Since v1.7.4 your computer shows a hit at once only on the ship the torpedo was fired at, and replays the host's hit only on the ship the host reported (tests with six players: hits seen by all clients 87.4 % → 96.8 %).
 - **Torpedo paths:** Torpedoes fired by another player are created on your computer from the fire message. The original gave them more turning power and a longer guidance time there, re-aimed disruptor shots, and swapped two flags: they left the tube sideways and made no launch sound. bcmpfix keeps the shooter's values. This also matters on the host, whose copy decides the hit.
 
 ### 3. Phasers
@@ -88,6 +90,8 @@ Since v1.7.0 the beams also start almost together with the shooter's: about 0.06
 
 Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, for example AI ships added by mods or the starbase in the starbase mission (tested only with AI ships created by the test tool). Before, every computer decided their firing itself: in a test with five AI ships, 8.3 % of their beams were missing on another screen; now none were.
 
+Since v1.7.4 a bank on the other screens also aims at the target and point its owner's bank aims at. A weapon system moves a bank to its next target when the current one leaves the bank's arc or range; the other computers kept the old target and could fire at a ship the shooter did not fire at (AI beams missing on another screen: 0.46 % → 0.02 %).
+
 ### 4. Network and timing
 
 - **Resending lost packets:** Guaranteed messages (firing, cloaking, deaths, game events) arrive in a fixed order. A lost packet used to hold up all following messages for at least 1 s. Now the resend happens after 0.3 s.
@@ -99,6 +103,7 @@ Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, f
 - **Invisible ship after joining:** If another player spawned a ship while you were joining, that ship could stay invisible on your screen for the whole game. bcmpfix shows it when the host sends it again during your join.
 - **Dedicated server:** On a dedicated server the first player's new ship could be refused by the server and stay invisible for everybody, and that player got no more updates of the other ships. The server numbered its own objects (copies of torpedoes) in the first player's range. Since v1.7.1 it uses a range no player gets.
 - **Freezes in big games:** The game's combat music watches the enemy ships with a range condition that added its event handlers again whenever the group of enemy ships changed, so their number doubled with every join, death and respawn. With many players the game then froze for seconds, up to a minute, whenever objects were deleted, above all for the player who joined first. Since v1.7.2 the handlers are registered once (`FixConditionInRange`).
+- **Crashes when a mission restarts:** When the starbase mission started over after the starbase was destroyed, two to four of five clients crashed in the tests (also with the original game). The weapons display and a mission event handler read through pointers that were already empty. Since v1.7.4 these reads are skipped (`FixRestartCrashes`).
 - **Script errors in windowed mode:** Any script error opened the "TG Python Exception Debug Console" in a separate window, and the game waited for keyboard input there. bcmpfix writes the error to `bcmpfix.log` and the game continues, as it does in fullscreen.
 
 You can turn off each fix separately in `bcmpfix.ini`. The file has comments.

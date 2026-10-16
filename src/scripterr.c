@@ -96,9 +96,12 @@ typedef int(__cdecl *PFN_Run)(const char *code);
 static void *o_ImportEx;
 static int g_inImportHook;
 
+int g_pythonUp; /* the game's __import__ ran: Python is initialised */
+
 static int *__cdecl hk_ImportEx(const char *name, int *globals, int *locals, int *fromlist)
 {
     int *m = ((PFN_ImportEx)o_ImportEx)(name, globals, locals, fromlist);
+    g_pythonUp = 1;
     if (m && !g_inImportHook && name && strstr(name, "Menus")) {
         g_inImportHook = 1;
         ((PFN_Run)ADDR_PYRUN)("import bcmpfix_mp\nbcmpfix_mp.GuardInfoPane()\n");

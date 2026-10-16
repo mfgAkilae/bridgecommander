@@ -90,7 +90,11 @@ def MissionModule(sSuffix):
 	return sys.modules[sName]
 
 def Now():
+	# the telemetry clock: the same on every instance of this machine (bcmpdll.ms counts
+	# from the start of this process); older DLLs only have ms
 	import bcmpdll
+	if hasattr(bcmpdll, 'tlogms'):
+		return bcmpdll.tlogms()
 	return bcmpdll.ms()
 
 def Log(sLine):

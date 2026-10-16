@@ -45,7 +45,8 @@ static FILE *open_env(const char *var, const char *def)
 }
 
 /* bcmpdll.log(str): append one line to the telemetry log */
-/* test mode: a line in the test pilot's telemetry log, with its clock (bcmpdll.ms) */
+/* test mode: a line in the test pilot's telemetry log, with its clock (bcmpdll.tlogms): one
+ * clock for all instances on a machine, so their logs line up */
 long tlog_ms(void)
 {
     LARGE_INTEGER c, f;
@@ -137,14 +138,29 @@ typedef PyObject *(__cdecl *PFN_IntFromLong)(long);
 /* bcmpdll.ms(): QPC milliseconds since boot as an exact integer. Python floats are
  * computed with the x87 FPU in single precision after D3D init, so time.time() is
  * useless for fine timing; QPC is shared by all processes on the machine. */
+/* bcmpdll.tlogms(): the telemetry clock (test pilot) */
+static PyObject *__cdecl m_tlogms(PyObject *self, PyObject *args)
+{
+    (void)self;
+    (void)args;
+    return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(tlog_ms());
+}
+
 static PyObject *__cdecl m_ms(PyObject *self, PyObject *args)
 {
+    /* milliseconds since the first call: counted from boot, the value wrapped after 24.8 days
+     * of uptime and the script's deadlines stopped */
+    static LONGLONG s_base = -1;
     LARGE_INTEGER c, f;
+    LONGLONG ms;
     (void)self;
     (void)args;
     QueryPerformanceCounter(&c);
     QueryPerformanceFrequency(&f);
-    return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)((long)((c.QuadPart / (f.QuadPart / 1000)) & 0x7fffffff));
+    ms = c.QuadPart / (f.QuadPart / 1000);
+    if (s_base < 0)
+        s_base = ms - 1000;
+    return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)((long)((ms - s_base) & 0x7fffffff));
 }
 
 /* bcmpdll.quit(code): terminate the process (test harness end) */
@@ -158,17 +174,18 @@ static PyObject *__cdecl m_quit(PyObject *self, PyObject *args)
     return py_none();
 }
 
-/* bcmpdll.allowhit(torpedoObjID, mode=0[, x, y, z]): let this torpedo hit ships on an
- * MP client; x, y, z = replay start point (start of the hit-test segment) */
+/* bcmpdll.allowhit(torpedoObjID, mode=0[, x, y, z[, target]]): let this torpedo hit ships on
+ * an MP client; x, y, z = replay start point (start of the hit-test segment); target = the
+ * ship the host reported the hit on (only that ship then, 0 = any) */
 static PyObject *__cdecl m_allowhit(PyObject *self, PyObject *args)
 {
-    int id = 0, mode = 0;
+    int id = 0, mode = 0, target = 0;
     float x = 1e30f, y = 0.0f, z = 0.0f; /* x stays 1e30 without a start point */
     (void)self;
-    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "i|ifff", &id, &mode, &x, &y, &z))
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "i|ifffi", &id, &mode, &x, &y, &z, &target))
         return NULL;
     if (x < 1e29f)
-        torpedo_authorize_start((DWORD)id, mode, x, y, z);
+        torpedo_authorize_start((DWORD)id, mode, x, y, z, (DWORD)target);
     else
         torpedo_authorize_mode((DWORD)id, mode);
     return py_none();
@@ -205,7 +222,8 @@ static PyObject *__cdecl m_takebanks(PyObject *self, PyObject *args)
     (void)self;
     (void)args;
     if (phaser_take(&ship, &bits, &target, &hits, &on, &seq)) {
-        _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu", ship, bits, target, hits, on, seq);
+        /* masks signed: bank 31 as 2147483648 would overflow the script's string.atoi */
+        _snprintf(buf, sizeof(buf), "%lu %ld %lu %ld %ld %lu", ship, (long)bits, target, (long)hits, (long)on, seq);
         tlog_printf("PT %ld %lu %lu %lu %lu", tlog_ms(), ship, bits, hits, on);
     }
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
@@ -342,7 +360,8 @@ static PyObject *__cdecl m_retire(PyObject *self, PyObject *args)
     return py_none();
 }
 
-/* bcmpdll.torpstats(): "suppressed allowed pushed predicted advanced" counters of the torpedo hooks */
+/* bcmpdll.torpstats(): "suppressed allowed pushed predicted advanced bystander" counters of the
+ * torpedo hooks */
 static PyObject *__cdecl m_torpstats(PyObject *self, PyObject *args)
 {
     unsigned long s, a;
@@ -350,7 +369,8 @@ static PyObject *__cdecl m_torpstats(PyObject *self, PyObject *args)
     (void)self;
     (void)args;
     torpedo_stats(&s, &a);
-    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu", s, a, torpedo_pushed_out(), torpedo_predicted(), torpedo_advanced());
+    _snprintf(buf, sizeof(buf), "%lu %lu %lu %lu %lu %lu", s, a, torpedo_pushed_out(), torpedo_predicted(),
+              torpedo_advanced(), torpedo_bystander());
     return ((PFN_StrFromStr)ADDR_PYSTRING_FROMSTRING)(buf);
 }
 
@@ -400,6 +420,7 @@ static PyMethodDef g_methods[] = {
     {"torpstats", m_torpstats, 1, NULL},
     {"config", m_config, 1, NULL},
     {"ms", m_ms, 1, NULL},
+    {"tlogms", m_tlogms, 1, NULL},
     {"quit", m_quit, 1, NULL},
     {"getenv", m_getenv, 1, NULL},
     {"log", m_log, 1, NULL},

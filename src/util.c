@@ -61,6 +61,7 @@ void config_load(void)
     g_cfg.fixGhostShip = ini_int(ini, "Fixes", "FixGhostShip", 1);
     g_cfg.fixDedicatedIds = ini_int(ini, "Fixes", "FixDedicatedObjectIds", 1);
     g_cfg.fixConditionInRange = ini_int(ini, "Fixes", "FixConditionInRange", 1);
+    g_cfg.fixRestartCrashes = ini_int(ini, "Fixes", "FixRestartCrashes", 1);
     g_cfg.snapNewShips = ini_int(ini, "Fixes", "SnapNewShips", 1);
     g_cfg.torpedoLead = ini_int(ini, "Fixes", "TorpedoLatencyCompensation", 1);
     g_cfg.predictHits = ini_int(ini, "Fixes", "PredictTorpedoHits", 1);
@@ -93,6 +94,8 @@ void config_load(void)
     g_cfg.pythonTickDelay = ini_int(ini, "Test", "PythonTickDelayMs", 6000) / 1000.0;
     g_cfg.statsIntervalSec = ini_int(ini, "Debug", "NetStatsSec", 0);
     g_cfg.phaserOwnerTarget = ini_int(ini, "Test", "PhaserOwnerTarget", 1);
+    g_cfg.predictAnyHit = ini_int(ini, "Test", "PredictAnyTorpedoHit", 0);
+    g_cfg.replayAnyShip = ini_int(ini, "Test", "ReplayAnyShip", 0);
     g_cfg.traceSec = ini_int(ini, "Debug", "TraceStateSec", ini_int(ini, "Test", "TraceStateSec", 0));
     g_cfg.verbose = ini_int(ini, "Debug", "Verbose", 0);
 
@@ -314,6 +317,7 @@ static LONG CALLBACK veh(EXCEPTION_POINTERS *ep)
         DWORD *sp = (DWORD *)c->Esp;
         char buf[512];
         int n = 0, i, k = 0;
+        buf[0] = 0;
         for (i = 0; i < 512 && k < 16; i++) {
             DWORD v;
             if (IsBadReadPtr(sp + i, 4))

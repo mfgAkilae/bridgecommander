@@ -46,7 +46,41 @@ static struct {
     DWORD v[6]; /* ship, seq, bits, target, hits, on */
 } g_rx[64];
 static int g_nrx;
-static unsigned long g_txBanks, g_rxBanks, g_rxHello, g_rxPeers;
+static unsigned long g_txBanks, g_rxBanks, g_rxHello, g_rxPeers, g_rxOtherVersion, g_rxRefused;
+
+/* The game may send from more than one socket (GameSpy heartbeats and query replies of a
+ * server): our packets must leave from the socket that carries the game, so take the one that
+ * sends most (counted per second). The host also remembers where the game sends to: only
+ * those machines - its players - may announce themselves (HELLO). */
+#define MAXSOCK 4
+static struct {
+    SOCKET s;
+    unsigned long n, last;
+} g_socks[MAXSOCK];
+static double g_sockT;
+#define MAXDEST 32
+static Endpoint g_dest[MAXDEST];
+#define ADDR_IS_MULTIPLAYER 0x0097FA89
+
+static int sent_to_recently(ULONG ip, USHORT port)
+{
+    int i;
+    for (i = 0; i < MAXDEST; i++)
+        if (g_dest[i].ip == ip && g_dest[i].port == port && now_sec() - g_dest[i].seen < 10.0)
+            return 1;
+    return 0;
+}
+
+/* everything about the last game: on a new game (or none) the role and the peers start over */
+static void forget_game(void)
+{
+    g_sock = INVALID_SOCKET;
+    memset(&g_host, 0, sizeof(g_host));
+    g_nep = 0;
+    g_nrx = 0;
+    memset(g_socks, 0, sizeof(g_socks));
+    memset(g_dest, 0, sizeof(g_dest));
+}
 
 int direct_enabled(void)
 {
@@ -65,9 +99,16 @@ void direct_init(void)
  * these packets (MSG_DIRECT); older versions would pass them to the game's network layer. */
 void direct_set_role(int isHost, int hostDirect)
 {
-    int role = !direct_enabled() ? 0 : isHost ? 1 : (hostDirect ? 2 : 0);
-    if (role != g_role)
+    int role = !direct_enabled() || !*(BYTE *)ADDR_IS_MULTIPLAYER ? 0 : isHost ? 1 : (hostDirect ? 2 : 0);
+    if (role != g_role) {
         logf("direct phaser reports: %s", role == 1 ? "host" : role == 2 ? "client" : "off");
+        if (g_lockInit) {
+            EnterCriticalSection(&g_lock);
+            if (!role)
+                g_nep = 0;
+            LeaveCriticalSection(&g_lock);
+        }
+    }
     g_role = role;
 }
 
@@ -75,10 +116,50 @@ void direct_set_role(int isHost, int hostDirect)
 void direct_note_game_send(SOCKET s, const struct sockaddr *to)
 {
     const struct sockaddr_in *a = (const struct sockaddr_in *)to;
+    double t = now_sec();
+    int i, free = -1, best = -1;
     if (g_sending || !a || a->sin_family != AF_INET || a->sin_addr.s_addr == INADDR_BROADCAST)
         return;
-    g_sock = s;
-    if (g_role != 1) {
+    for (i = 0; i < MAXSOCK; i++) {
+        if (g_socks[i].s == s && (g_socks[i].n || g_socks[i].last))
+            break;
+        if (free < 0 && !g_socks[i].n && !g_socks[i].last)
+            free = i;
+    }
+    if (i == MAXSOCK && free >= 0) {
+        i = free;
+        g_socks[i].s = s;
+    }
+    if (i < MAXSOCK)
+        g_socks[i].n++;
+    if (t - g_sockT >= 1.0) {
+        g_sockT = t;
+        for (i = 0; i < MAXSOCK; i++) {
+            g_socks[i].last = g_socks[i].n;
+            g_socks[i].n = 0;
+        }
+    }
+    for (i = 0; i < MAXSOCK; i++)
+        if ((g_socks[i].n || g_socks[i].last) && (best < 0 || g_socks[i].last + g_socks[i].n > g_socks[best].last + g_socks[best].n))
+            best = i;
+    if (best >= 0)
+        g_sock = g_socks[best].s;
+    if (s != g_sock)
+        return; /* another socket (GameSpy): not where the game's players are */
+    if (g_role == 1) {
+        int old = 0;
+        for (i = 0; i < MAXDEST; i++) {
+            if (g_dest[i].ip == a->sin_addr.s_addr && g_dest[i].port == a->sin_port)
+                break;
+            if (g_dest[i].seen < g_dest[old].seen)
+                old = i;
+        }
+        if (i == MAXDEST)
+            i = old;
+        g_dest[i].ip = a->sin_addr.s_addr;
+        g_dest[i].port = a->sin_port;
+        g_dest[i].seen = t;
+    } else {
         g_host.ip = a->sin_addr.s_addr;
         g_host.port = a->sin_port;
     }
@@ -125,8 +206,13 @@ int direct_filter(SOCKET s, const char *buf, int len, const struct sockaddr *fro
 {
     const struct sockaddr_in *a = (const struct sockaddr_in *)from;
     int type, i;
-    if (len < MAGIC_LEN + 2 || memcmp(buf, MAGIC, MAGIC_LEN) != 0 || buf[MAGIC_LEN] != VERSION)
+    if (len < MAGIC_LEN + 2 || memcmp(buf, MAGIC, MAGIC_LEN) != 0)
         return 0;
+    /* ours, also in another version: the game's parser must never see it */
+    if (buf[MAGIC_LEN] != VERSION) {
+        g_rxOtherVersion++;
+        return 1;
+    }
     type = buf[MAGIC_LEN + 1];
     if (!a || a->sin_family != AF_INET || !g_role)
         return 1;
@@ -134,9 +220,14 @@ int direct_filter(SOCKET s, const char *buf, int len, const struct sockaddr *fro
     if (type == PK_HELLO && len == MAGIC_LEN + 2) {
         g_rxHello++;
         if (g_role == 1) {
-            /* host: a modded client */
+            /* host: a modded client - only a machine the game sends to (one of its players);
+             * otherwise anybody could fill the table and learn the players' addresses */
             i = find_ep(a->sin_addr.s_addr, a->sin_port);
-            if (i < 0 && g_nep < MAXEP) {
+            if (i < 0 && !sent_to_recently(a->sin_addr.s_addr, a->sin_port)) {
+                g_rxRefused++;
+                i = -2;
+            }
+            if (i == -1 && g_nep < MAXEP) {
                 i = g_nep++;
                 g_ep[i].ip = a->sin_addr.s_addr;
                 g_ep[i].port = a->sin_port;
@@ -145,6 +236,16 @@ int direct_filter(SOCKET s, const char *buf, int len, const struct sockaddr *fro
             }
             if (i >= 0)
                 g_ep[i].seen = now_sec();
+        } else if (g_role == 2 && find_ep(a->sin_addr.s_addr, a->sin_port) < 0) {
+            /* client: another client's HELLO from a port the host did not tell us - its NAT
+             * maps each destination to its own port. Use the port it reaches us from. */
+            for (i = 0; i < g_nep; i++)
+                if (g_ep[i].ip == a->sin_addr.s_addr) {
+                    logf("direct phaser reports: peer %s:%u now port %u", inet_ntoa(a->sin_addr), ntohs(g_ep[i].port),
+                         ntohs(a->sin_port));
+                    g_ep[i].port = a->sin_port;
+                    break;
+                }
         }
         (void)s;
     } else if (type == PK_PEERS && g_role == 2 && is_host(a->sin_addr.s_addr, a->sin_port) &&
@@ -222,6 +323,13 @@ void direct_frame(void)
     if (!g_lockInit)
         return;
     EnterCriticalSection(&g_lock);
+    if (!*(BYTE *)ADDR_IS_MULTIPLAYER) {
+        if (g_role || g_sock != INVALID_SOCKET || g_nep)
+            forget_game();
+        g_role = 0;
+        LeaveCriticalSection(&g_lock);
+        return;
+    }
     n = g_nrx;
     for (i = 0; i < n; i++)
         phaser_set_remote_seq(g_rx[i].v[0], g_rx[i].v[1], g_rx[i].v[2], g_rx[i].v[3], g_rx[i].v[4], g_rx[i].v[5], 1);

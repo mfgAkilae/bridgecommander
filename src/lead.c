@@ -190,8 +190,13 @@ static void __fastcall hk_Reader(void *ship, void *edx, void *msg)
             target[2] += fwd[2] * s;
         }
     }
-    if (ai && t0 == 0.0f && *(float *)(ai + 0x2C) != 0.0f && g_cfg.snapNewShips)
-        snap_mark(*(DWORD *)((BYTE *)ship + 4)); /* the proxy's first update */
+    if (ai && t0 == 0.0f && *(float *)(ai + 0x2C) != 0.0f) {
+        /* the proxy's first update */
+        velo_forget(ai);
+        orient_forget(ai);
+        if (g_cfg.snapNewShips && g_cfg.fixProxyInit)
+            snap_mark(*(DWORD *)((BYTE *)ship + 4));
+    }
     if (ai && *(float *)(ai + 0x2C) != t0 && g_cfg.orientationCorrection == 2)
         orient_on_update(ai, g_cfg.latencyComp ? ms : 0, p0);
     if (ai && *(float *)(ai + 0x2C) != t0 && (g_cfg.velocityExtrapolation || g_cfg.knockbackCorrection || g_cfg.velocityTracking))
@@ -222,6 +227,8 @@ void lead_install(void)
     memcpy(jmp + 1, &rel, 4);
     mem_write((void *)ADDR_SHIP_READER, jmp, 5);
     logf("PATCH latency compensation (state update reader): applied");
-    if (g_cfg.snapNewShips)
+    if (g_cfg.snapNewShips && g_cfg.fixProxyInit)
         logf("PATCH new remote ships start at their first received position: applied");
+    else if (g_cfg.snapNewShips)
+        logf("PATCH new remote ships start at their first received position: NOT applied (needs FixProxyFirstFrame=1)");
 }

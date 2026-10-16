@@ -81,6 +81,16 @@ static int slot_of(BYTE *ai, int create)
     return freeSlot;
 }
 
+/* lead.c, at a proxy's first state update: a new proxy may sit at the address of a deleted one
+ * (the tables are keyed by the NetworkAI's address), whose history must not carry over: a
+ * respawned ship was pulled towards where the old one had died */
+void velo_forget(BYTE *ai)
+{
+    int i = slot_of(ai, 0);
+    if (i >= 0)
+        memset(&g_ship[i], 0, sizeof(g_ship[0]));
+}
+
 /* called by the reader hook for every update that carried a position */
 void velo_on_update(BYTE *ai, int leadMs, const float *p0)
 {
@@ -194,7 +204,7 @@ int velo_knocked(BYTE *ai, float proxySpeed)
 {
     int i = slot_of(ai, 0);
     float sp = *(float *)(ai + 0x54), d, ref;
-    if (i < 0)
+    if (i < 0 || *(float *)(ai + 0x2C) == 0.0f) /* no update for this proxy yet */
         return 0;
     if (sp < 0.0f)
         sp = -sp;
@@ -216,7 +226,7 @@ int velo_target(BYTE *ai, float *target, float *dir)
 {
     int i = slot_of(ai, 0), k;
     float h, hc, off[3], ve[3], vu[3], n;
-    if (i < 0 || g_ship[i].n < 1)
+    if (i < 0 || g_ship[i].n < 1 || *(float *)(ai + 0x2C) == 0.0f) /* no update for this proxy yet */
         return 0;
     h = g_ship[i].lead + g_cfg.trackLeadOffsetMs / 1000.0f + (game_time() - g_ship[i].gotAt);
     if (h < 0.0f)

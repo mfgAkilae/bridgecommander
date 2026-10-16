@@ -23,6 +23,19 @@
  * Fix (FixDedicatedObjectIds=1): a dedicated server uses slot 15 (the game has 16 player
  * slots, 0x006A19C0; the menu allows 8 players), with its counter moved into that range.
  *
+ * Mission restart crashes (original-game bugs; seen on clients when the starbase mission
+ * restarts after the starbase was destroyed, both on the frame the player gets the new ship):
+ * - Game::HandleSetPlayer (0x00406AE0) -> WeaponsDisplay::SetShipID (0x0054B950) removes the
+ *   charge range checks it put on the previous ship's weapons (0x0054B6E0). For a weapon whose
+ *   FloatRangeWatcher has no checks left, FloatRangeWatcher::RemoveRangeCheck (0x0044C3F0)
+ *   reads the second chain through the empty list head (read at 0x18, EIP 0x0044C413).
+ * - Mission::PlayerEnteredSet (0x004090D0) reads the set's name through the object's set
+ *   (+0x20) without a check; for an object that left its set before the queued event ran,
+ *   that is NULL (read at 0x74, EIP 0x004090EB).
+ * Fix (FixRestartCrashes=1): RemoveRangeCheck returns on an empty list (nothing to remove),
+ * and PlayerEnteredSet passes such an event on as it does for an object that is not an
+ * ObjectClass.
+ *
  * Logs (test mode / Verbose): MultiplayerGame::ReceiveMessageHandler (0x0069F2A0)
  * processes game messages only once the game has its mission (game+0x70, and +0x3C of
  * that) and drops earlier ones without a trace; this module logs them, the object
@@ -49,6 +62,19 @@ typedef BYTE *(__cdecl *PFN_Create)(BYTE *data, int len);
 typedef int(__fastcall *PFN_Bcast)(void *net, void *edx, const char *group, void *msg);
 static void *o_Create, *o_Bcast;
 
+/* restart crashes: RemoveRangeCheck's branch to the second chain when the list is empty, the
+ * WeaponsDisplay cleanup's call of it (thiscall(watcher, id)), and PlayerEnteredSet's
+ * ObjectClass cast (cdecl) */
+#define ADDR_RRC_EMPTY 0x0044C3FF
+#define ADDR_RRC 0x0044C3F0
+#define ADDR_CALL_WD_RRC 0x0054B89C
+#define ADDR_CALL_PES_CAST 0x004090DC
+#define ADDR_OBJCLASS_CAST 0x00434ED0
+typedef void(__fastcall *PFN_RemoveCheck)(BYTE *watcher, void *edx, int id);
+typedef BYTE *(__cdecl *PFN_ObjCast)(void *obj);
+static void *o_RemoveCheck, *o_ObjCast;
+static unsigned long g_emptyWatchers, g_noSetEvents;
+
 /* pieces of the factory 0x005A1F50: object lookup by ID, TGBufferStream on the stack,
  * and the two ObjectClass readers (species byte; position, orientation, velocity, name
  * and set). ShipClass's own reader (vtable+0x118) is part 1 plus the Python model setup. */
@@ -67,6 +93,7 @@ typedef void(__fastcall *PFN_Attach)(void *stream, void *edx, BYTE *data, int le
 typedef int(__fastcall *PFN_ReadInt)(void *stream, void *edx);
 typedef void(__fastcall *PFN_ObjRead)(void *obj, void *edx, void *stream);
 typedef char(__fastcall *PFN_IsA)(void *obj, void *edx, int type);
+typedef float *(__fastcall *PFN_GetPosJ)(void *obj, void *edx);
 
 static int place_orphan(BYTE *obj, BYTE *data, int len)
 {
@@ -107,6 +134,14 @@ void join_frame(void)
         off = 0;
     *(int *)(u + UT_SLOT) = DEDICATED_SLOT;
     *(DWORD *)(u + UT_NEXT_ID) = SLOT_BASE(DEDICATED_SLOT) + off;
+    {
+        /* the server's range is slot 15: a sixteenth client would get it too */
+        BYTE *game = *(BYTE **)0x0097E238;
+        if (game && *(int *)(game + 0x1FC) > DEDICATED_SLOT) {
+            *(int *)(game + 0x1FC) = DEDICATED_SLOT;
+            logf("dedicated server: at most %d players (slot %d is the server's)", DEDICATED_SLOT, DEDICATED_SLOT);
+        }
+    }
     if (s_logs++ < 5)
         logf("dedicated server: object IDs from slot %d (was %d, next id %lu -> %lu)", DEDICATED_SLOT, slot, next,
              SLOT_BASE(DEDICATED_SLOT) + off);
@@ -131,10 +166,37 @@ static BYTE *__cdecl hk_Create(BYTE *data, int len)
     if (!o && len >= 8)
         logf("object from network NOT created: id=%lu (%s)", *(DWORD *)(data + 4),
              ((PFN_FindObject)ADDR_FIND_OBJECT)(0, *(DWORD *)(data + 4)) ? "the ID is in use here" : "reader failed");
-    if (g_cfg.testMode || g_cfg.verbose)
-        logf("object from network: %d bytes -> %s id=%lu type=0x%x set=%s", len, o ? "created" : "NOT created",
-             o ? *(DWORD *)(o + 4) : 0, o ? ((PFN_MsgType)(*(void ***)o)[1])(o, 0) : 0,
-             o ? (*(void **)(o + 0x20) ? "yes" : "NONE") : "-");
+    if (g_cfg.testMode || g_cfg.verbose) {
+        float *p = o ? ((PFN_GetPosJ)(*(void ***)o)[0x94 / 4])(o, 0) : NULL;
+        logf("object from network: %d bytes -> %s id=%lu type=0x%x set=%s pos=%.1f,%.1f,%.1f", len,
+             o ? "created" : "NOT created", o ? *(DWORD *)(o + 4) : 0, o ? ((PFN_MsgType)(*(void ***)o)[1])(o, 0) : 0,
+             o ? (*(void **)(o + 0x20) ? "yes" : "NONE") : "-", p ? p[0] : 0.0f, p ? p[1] : 0.0f, p ? p[2] : 0.0f);
+        if (o)
+            tlog_printf("OC %ld %lu %.2f %.2f %.2f", tlog_ms(), *(DWORD *)(o + 4), p[0], p[1], p[2]);
+    }
+    return o;
+}
+
+/* WeaponsDisplay cleanup: count the empty watchers (the byte patch covers every caller) */
+static void __fastcall hk_RemoveCheck(BYTE *watcher, void *edx, int id)
+{
+    (void)edx;
+    if (!*(void **)(watcher + 4)) {
+        if (g_emptyWatchers++ < 5)
+            logf("restart crash fix: weapons display removed a range check from an empty watcher (skipped)");
+        return;
+    }
+    ((PFN_RemoveCheck)o_RemoveCheck)(watcher, 0, id);
+}
+
+static BYTE *__cdecl hk_EnteredSetCast(void *obj)
+{
+    BYTE *o = ((PFN_ObjCast)o_ObjCast)(obj);
+    if (o && !*(void **)(o + 0x20)) {
+        if (g_noSetEvents++ < 5)
+            logf("restart crash fix: entered-set event for object id=%lu, which is in no set (skipped)", *(DWORD *)(o + 4));
+        return NULL;
+    }
     return o;
 }
 
@@ -183,6 +245,13 @@ void join_install(void)
     BYTE jmp[6];
     LONG rel;
     int logs = g_cfg.testMode || g_cfg.verbose;
+    if (g_cfg.fixRestartCrashes) {
+        patch_bytes(ADDR_RRC_EMPTY, "74 12", "74 64", "range watcher: no read through an empty list (restart crash)");
+        redirect_call(ADDR_CALL_WD_RRC, (void *)hk_RemoveCheck, &o_RemoveCheck, ADDR_RRC,
+                      "weapons display: count empty range watchers (restart crash)");
+        redirect_call(ADDR_CALL_PES_CAST, (void *)hk_EnteredSetCast, &o_ObjCast, ADDR_OBJCLASS_CAST,
+                      "entered-set event for an object in no set (restart crash)");
+    }
     if (g_cfg.fixGhostShip || logs)
         redirect_call(ADDR_CALL_CREATE, (void *)hk_Create, &o_Create, ADDR_CREATE,
                       g_cfg.fixGhostShip ? "ghost-ship fix (objects created from network)" : "log objects created from network");

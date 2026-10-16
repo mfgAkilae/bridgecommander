@@ -22,6 +22,7 @@ MSG_HIT = MSG_BASE
 MSG_PING = MSG_BASE + 1
 MSG_PONG = MSG_BASE + 2
 MSG_DIRECT = MSG_BASE + 6   # host: "send me and the others your phaser reports directly" (direct.c)
+MSG_NOHITS = MSG_BASE + 7   # host: "I do not report torpedo hits" (TorpedoHitAuthority=0)
 MSG_BANKS = MSG_BASE + 5    # the phaser banks a ship's owner fires, those that hit and those whose
                             # beam is on an object (bitmasks), with the owner's sequence number;
                             # MSG_BASE + 3 (v1.5.0) and + 4 (v1.6.0) are older formats, now ignored
@@ -37,6 +38,7 @@ PREDICT_KEEP_MS = 2000      # how long a predicted hit waits for the host's repo
 g_idMission = None
 g_bHostHasMod = 0
 g_iDirectHost = -1    # net ID of the host that announced direct phaser reports
+g_bHostNoHits = 0     # the host said it does not report torpedo hits (MSG_NOHITS)
 g_dRtt = {}                 # net id -> smoothed round trip time in ms
 g_iNextPing = 0
 g_iNextLead = 0
@@ -46,7 +48,7 @@ g_dPending = {}             # client: torpedo id -> [deadline ms, attempt, targe
 g_lWaiting = []             # client: hit reports without a local copy yet: [deadline ms, target, shooter, rel x, y, z, hull]
 g_lPredicted = []           # client: hits our own torpedo copies made: [ms, shooter id, target id, hull, matched, torpedo id]
 g_dReplayed = {}            # client: torpedo id -> ms its replay started (their hits are no predictions)
-g_dStats = {'predicted': 0, 'pred_ok': 0, 'pred_false': 0, 'pred_hull_diff': 0, 'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0, 'forced': 0}
+g_dStats = {'predicted': 0, 'pred_ok': 0, 'pred_false': 0, 'pred_hull_diff': 0, 'hits_sent': 0, 'hits_recv': 0, 'replayed': 0, 'no_torpedo': 0, 'no_target': 0, 'expired': 0, 'lost': 0, 'retries': 0, 'infopane_skipped': 0, 'waiting': 0, 'late_found': 0, 'moved_n': 0, 'moved_sum': 0, 'moved_max': 0, 'forced': 0, 'banks_refused': 0}
 g_iNextStats = 0
 
 
@@ -76,6 +78,8 @@ def DoTick():
 	global g_iNextPing, g_iNextLead, g_iNextStats
 	PatchConditionInRange()
 	if not App.g_kUtopiaModule.IsMultiplayer():
+		if g_iDirectHost != -1:
+			ResetDirect()
 		return
 	GuardInfoPane()
 	LogGuards()
@@ -100,6 +104,11 @@ def DoTick():
 			(pDirect, kDirect) = NewMessage(MSG_DIRECT, 0)
 			Finish(pDirect, kDirect)
 			pNet.SendTGMessageToGroup('NoMe', pDirect)
+		if App.g_kUtopiaModule.IsHost() and Cfg('TorpedoHitAuthority') <= 0:
+			# the clients must not wait for hit reports that never come
+			(pNoHits, kNoHits) = NewMessage(MSG_NOHITS, 0)
+			Finish(pNoHits, kNoHits)
+			pNet.SendTGMessageToGroup('NoMe', pNoHits)
 		bcmpdll.netrole(App.g_kUtopiaModule.IsHost(), g_iDirectHost == pNet.GetHostID())
 		if App.g_kUtopiaModule.IsHost():
 			UpdateOwnedShips(pNet)
@@ -159,8 +168,17 @@ def MakeInfoPaneGuard(pOrig):
 		pOrig()
 	return RebuildInfoPane
 
+def ResetDirect():
+	# nothing the last host announced carries over to the next game
+	global g_iDirectHost, g_bHostNoHits
+	g_iDirectHost = -1
+	g_bHostNoHits = 0
+	import bcmpdll
+	bcmpdll.netrole(0, 0)
+
 def Register(pMission):
 	global g_idMission, g_bHostHasMod
+	ResetDirect()
 	g_idMission = pMission.GetObjID()
 	# client: suppress local torpedo hits only once the host proved (by answering
 	# a ping) that it runs bcmpfix and will report its hits
@@ -202,6 +220,8 @@ def OnNetMessage(pObject, pEvent):
 			ReceiveBanks(pMessage, kStream)
 		elif iType == MSG_DIRECT:
 			ReceiveDirect(pMessage)
+		elif iType == MSG_NOHITS:
+			ReceiveNoHits(pMessage)
 		kStream.Close()
 	except:
 		import sys
@@ -280,6 +300,19 @@ def UpdateOwnedShips(pNet):
 			iGuard = iGuard + 1
 	bcmpdll.setowned(string.join(lIDs))
 
+def ReceiveNoHits(pMessage):
+	# the host runs bcmpfix but does not report torpedo hits: keep the stock collisions
+	global g_bHostNoHits, g_bHostHasMod
+	pNet = App.g_kUtopiaModule.GetNetwork()
+	if App.g_kUtopiaModule.IsHost() or not pNet or pMessage.GetFromID() != pNet.GetHostID():
+		return
+	if not g_bHostNoHits:
+		g_bHostNoHits = 1
+		g_bHostHasMod = 0
+		import bcmpdll
+		bcmpdll.authority(0)
+		DllLog('bcmpfix_mp: the host does not report torpedo hits: own collisions decide')
+
 def ReceiveDirect(pMessage):
 	global g_iDirectHost
 	pNet = App.g_kUtopiaModule.GetNetwork()
@@ -347,9 +380,26 @@ def string_split(s):
 	import string
 	return string.split(s)
 
+def SentByOwner(iFrom, iShip):
+	# the player's ship, or a ship of that player: after a mission restart the game can keep
+	# the player's previous ship, and GetShipFromPlayerID then finds that one
+	pGame = App.MultiplayerGame_Cast(App.Game_GetCurrentGame())
+	if pGame:
+		pShip = pGame.GetShipFromPlayerID(iFrom)
+		if pShip and pShip.GetObjID() == iShip:
+			return 1
+	pShip = App.ShipClass_GetObjectByID(None, iShip)
+	if not pShip:
+		return 0
+	return pShip.GetNetPlayerID() == iFrom
+
 def ReceiveBanks(pMessage, kStream):
 	import bcmpdll
 	iShip = kStream.ReadInt()
+	if App.g_kUtopiaModule.IsHost() and not SentByOwner(pMessage.GetFromID(), iShip):
+		# a client reports only its own ship (AI ships are the host's)
+		g_dStats['banks_refused'] = g_dStats['banks_refused'] + 1
+		return
 	iBits = kStream.ReadInt()
 	iTarget = kStream.ReadInt()
 	iHits = kStream.ReadInt()
@@ -409,7 +459,7 @@ def ReceivePong(pMessage, kStream):
 	else:
 		g_dRtt[iFrom] = iRtt
 	pNet = App.g_kUtopiaModule.GetNetwork()
-	if not g_bHostHasMod and not App.g_kUtopiaModule.IsHost() and pNet and iFrom == pNet.GetHostID():
+	if not g_bHostHasMod and not g_bHostNoHits and not App.g_kUtopiaModule.IsHost() and pNet and iFrom == pNet.GetHostID():
 		g_bHostHasMod = 1
 		import bcmpdll
 		bcmpdll.authority(1)
@@ -426,12 +476,37 @@ def UpdateLeads(pNet):
 		iOwn = pPlayer.GetObjID()
 	if App.g_kUtopiaModule.IsHost():
 		# updates about a client's ship come from that client
+		pSet = None
+		if pPlayer:
+			pSet = pPlayer.GetContainingSet()
 		for iID in g_dRtt.keys():
 			pShip = pGame.GetShipFromPlayerID(iID)
 			if pShip and pShip.GetObjID() != iOwn:
 				bcmpdll.setlead(pShip.GetObjID(), g_dRtt[iID] / 2 + LEAD_EXTRA_MS)
 				# a client's fire message reaches us directly
 				bcmpdll.setfirelead(pShip.GetObjID(), g_dRtt[iID] / 2 - FIRE_LEAD_TRIM_MS)
+				if not pSet:
+					pSet = pShip.GetContainingSet()
+		# after a mission restart GetShipFromPlayerID can find a player's previous ship: go by
+		# each ship's own player ID too
+		if not pSet:
+			return
+		pObj = pSet.GetFirstObject()
+		if App.IsNull(pObj):
+			return
+		iFirst = pObj.GetObjID()
+		iGuard = 0
+		while iGuard < 500:
+			pShip = App.ShipClass_Cast(pObj)
+			if pShip and pShip.GetObjID() != iOwn:
+				iID = pShip.GetNetPlayerID()
+				if g_dRtt.has_key(iID):
+					bcmpdll.setlead(pShip.GetObjID(), g_dRtt[iID] / 2 + LEAD_EXTRA_MS)
+					bcmpdll.setfirelead(pShip.GetObjID(), g_dRtt[iID] / 2 - FIRE_LEAD_TRIM_MS)
+			pObj = pSet.GetNextObject(pObj.GetObjID())
+			if App.IsNull(pObj) or pObj.GetObjID() == iFirst:
+				break
+			iGuard = iGuard + 1
 	else:
 		# all state updates come from the host
 		iHost = pNet.GetHostID()
@@ -476,7 +551,8 @@ def OnWeaponHit(pObject, pEvent):
 			SendHit(pEvent)
 		else:
 			pTorp = App.Torpedo_Cast(pEvent.GetSource())
-			if pTorp and g_dPending.has_key(pTorp.GetObjID()):
+			pDest = App.ShipClass_Cast(pEvent.GetDestination())
+			if pTorp and g_dPending.has_key(pTorp.GetObjID()) and pDest and pDest.GetObjID() == g_dPending[pTorp.GetObjID()][2]:
 				# a replayed host hit just happened locally: retire that torpedo
 				del g_dPending[pTorp.GetObjID()]
 				import bcmpdll
@@ -687,9 +763,9 @@ def ReplayApproach(pTorp, pTarget, lEntry):
 	# mode 1: host saw a shield hit, mode 2: hull hit - the DLL makes ours match;
 	# the start point becomes the start of the hit-test segment
 	if lEntry[6]:
-		bcmpdll.allowhit(pTorp.GetObjID(), 2, fSX, fSY, fSZ)
+		bcmpdll.allowhit(pTorp.GetObjID(), 2, fSX, fSY, fSZ, lEntry[2])
 	else:
-		bcmpdll.allowhit(pTorp.GetObjID(), 1, fSX, fSY, fSZ)
+		bcmpdll.allowhit(pTorp.GetObjID(), 1, fSX, fSY, fSZ, lEntry[2])
 
 def ExpirePending():
 	# replays without a local hit get two more approaches; after that the

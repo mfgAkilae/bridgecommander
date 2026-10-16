@@ -1074,7 +1074,7 @@ hits 100 %, positions 0.05–0.09. Kick test: peak error median 3.4, 90th percen
 settings kept, new files installed (`SnapNewShips` is on by default when the kept `bcmpfix.ini`
 lacks it). No crashes, no script errors.
 
-## Issue #30: remote phaser beams without hits (after v1.7.3)
+## Issue #30: remote phaser beams without hits (v1.7.4)
 
 In the v1.7.3 release check one AI ship fired long beams at the host's ship at 162–175 units: the
 host showed hits, the four clients showed the beam without hits (95 of 2372 AI beams). It looked
@@ -1146,7 +1146,8 @@ deathmatch (73 of 73, 58 of 58 in the v1.7.3 release check): the defenders fly c
 starbase and their torpedoes pass right beside it. Each computer creates another player's torpedo
 from that player's ship as it sees it, so near a large object the copies part ways: on a client its
 copy hits the starbase, on the host it flies on and hits an attacker, and the host's hit cannot be
-replayed on that client because its copy is gone (#31). The damage is the host's.
+replayed on that client because its copy is gone (#31, fixed in v1.7.4, see below). The damage is
+the host's.
 
 Ships that appear (`tools/spawn.py`): in one run a respawned ship came 375 units off on three
 clients and slid into place within a second, although `SnapNewShips` placed it at its first
@@ -1154,4 +1155,172 @@ update: that update already carried the old position. In four more runs (183 shi
 a peer, 33 deaths) two ships came 25 and 38 units off on one client each, the others at most 4
 units. Holding back the host's relay of a client ship until the host had that ship's first update
 did not help (one ship then stayed 25 units off for a second while the host held back about 69000
-writes) and was dropped.
+writes) and was dropped. The cause was another one, fixed in v1.7.4 (see "Respawned ships pulled
+towards an old position" below).
+
+## Issue #31: torpedoes near the starbase (v1.7.4)
+
+In the starbase mission the defenders fly close to their own starbase, and their torpedoes pass
+right beside it. Every computer flies its own copy of each torpedo, created from the shooter's ship
+as that computer sees it, so the copies take slightly different paths. Two things then went wrong:
+
+- **Predicted hits on a bystander.** `PredictTorpedoHits` showed a client's own collision at once.
+  When the client's copy touched the starbase while the host's copy flew past and hit an attacker,
+  the client showed a starbase hit the host never had, and its copy was spent: the host's real hit
+  could not be replayed (`no_torpedo`).
+- **Replays on the wrong ship.** A replay released the torpedo copy for collisions with any ship. A
+  copy that was still inside the starbase hit the starbase instead of the ship the host reported.
+
+Fix (`src/torpedo.c`): a client predicts a hit only on the ship the torpedo was fired at (the
+target ID the spawn stores at +0x118), and not at all for a torpedo that has touched another ship
+on its way: such hits wait for the host's report. A replay is released for the reported ship only
+(`bcmpdll.allowhit` takes the target), and while it waits, the copy takes no predicted hit
+elsewhere. `[Test] PredictAnyTorpedoHit=1` and `ReplayAnyShip=1` restore the old behaviour for
+comparisons.
+
+Six players in the starbase mission (host and two clients defend, three clients attack), 240 s,
+60 ms ±20 ms, 1 % loss:
+
+| | before (5 runs) | fix (4 runs) |
+|---|---|---|
+| torpedo hits on the host seen by all clients | 890 of 1018 (87.4 %) | 754 of 779 (96.8 %) |
+| per run | 71.4–98.5 % | 94.8–99.0 % |
+| hits on the starbase that only a client showed | 503 | 1 |
+| hits on ships that only a client showed | 14 | 9 |
+| predicted hits the host did not confirm | 76 | 10 |
+
+Most of the remaining misses were one ship's pulse weapon (fired in pairs at a high rate) on an
+attacker, where the clients found no copy left to replay. In deathmatch, six players, 180 s, the
+clients still predicted most hits (49 instead of 58 per client, one run each) and all 64 host hits
+were seen by all clients; the predicted hits the host did not confirm dropped from 21 to 0.
+
+## Respawned ships pulled towards an old position (v1.7.4)
+
+Since v1.7.3 a ship that appears on a screen starts at the first position received for it (#29). In
+the starbase-mission runs a few respawned ships were still far off 0.25 s after they appeared: 95.2
+units in one run, 25.6, 8.3 and 7.6 in others (`tools/spawn.py`). In the cases traced, the new
+ship's network proxy had been created at the address of a deleted proxy (the heap reuses freed
+blocks). Velocity and orientation tracking keep their history per proxy address, so the new ship
+inherited the dead ship's measured velocity and turn and was driven along it, away from its own
+position, until its own updates replaced the history.
+
+Fix (`src/lead.c`, `src/velo.c`, `src/orient.c`): at a proxy's first state update (its last update
+time +0x2C is still 0 when the reader runs) both tables drop what they hold for that address, and
+before the first update they give no target.
+
+Ships appearing on a peer, distance from the owner's position 0.25 s after they appeared (six
+players, starbase mission and deathmatch, 240–300 s, 60 ms ±20 ms, 1 % loss):
+
+| | before (10 runs, 563 appearances) | fix (8 runs, 442 appearances) |
+|---|---|---|
+| runs with a ship more than 5 units off | 4 | 0 |
+| largest distance | 95.2 units | 4.7 units (a ship a client saw at game start; 0.4 after 0.5 s) |
+| 90th percentile per run | 0.2–0.3 units | 0.2–0.3 units |
+
+Runs in which clients crashed at a mission restart are left out (see the next section); in one of
+them a ship that appeared while ships were falling behind was 6.6 units off.
+
+## Crashes when a mission restarts (v1.7.4, `FixRestartCrashes`)
+
+When the starbase is destroyed, the starbase mission ends and starts over: every player picks a ship
+again. In test runs with forced damage (all hulls at 1 % every 15–20 s, so the starbase and the
+players die often) two to four of the five clients crashed at a restart, in every run: 21 crashed
+clients in 8 runs with the v1.7.4 development code, two in a run with v1.7.3 on every machine, and
+the same with bcmpfix's fixes switched off. Only the game's script error console was kept off in that
+run, because the starbase mission raises a script error on every client (`KeyError` in
+`ObjectCreatedHandler`), which freezes the stock game in windowed mode before any restart. A run
+with every other fix switched off too had four of five clients crash at the same two places.
+
+Both crashes are in the original game, on the frame a client gets its new ship:
+
+- `Game::HandleSetPlayer` (0x00406AE0) calls `WeaponsDisplay::SetShipID` (0x0054B950), which removes
+  the charge range checks it had put on the previous ship's weapons (0x0054B6E0). When such a
+  `FloatRangeWatcher` has no checks left, `RemoveRangeCheck` (0x0044C3F0) reads its second chain
+  through the empty list head: access violation at 0x0044C413 (address 0x18).
+- `Mission::PlayerEnteredSet` (0x004090D0) reads the name of the object's set without checking
+  that the object is still in a set: access violation at 0x004090EB (address 0x74).
+
+Fix (`src/join.c`): `RemoveRangeCheck` returns when the list is empty (there is nothing to remove),
+and `PlayerEnteredSet` passes the event on for an object in no set, as it does for an object that is
+not an `ObjectClass`. Two runs with the fix (300 s, six players, three restarts each): no crash; the
+empty watcher occurred 10 times per run, the object in no set once.
+
+In two of the runs before the fix the ships of some remaining players also fell behind on every
+other screen while the crashed clients were still in the game, growing to 10–27 units within about
+50 s (the host's upload rose to 550 packets per second at the same time). It did not happen in the
+runs with the fix.
+
+The test pilot picks a new ship 8 s after its ship is gone. At a restart this can fall into the
+restart itself: the client creates the ship, the restart deletes it there, but the host keeps it
+and sends it back. That ship then exists on every computer without an owner, and the player's next
+ship is not seen by the others. In the runs with the fix this happened to one or two players per
+run: their phaser hits were missing on the host (up to 32 % of the clients' beams in a run), and
+in one run the host kept such a ship as "Delta - D1" while the player's new ship was 0.5–0.7 units
+behind on the clients. Players pick their ship in the menu after the restart; whether they can hit
+the same moment was not tested. Since then the host takes a client's phaser report, and sets the
+latency compensation, for every ship with that player's ID, not only for the ship the game names
+as the player's.
+
+## Code review of the less tested parts (v1.7.4)
+
+Two independent read-only reviews (OpenAI Codex `gpt-6-astra` and Claude Fable) looked at the parts
+of the code that the sandbox tests hardly reach: internet conditions and the direct UDP channel,
+players and ships leaving mid-game, other game modes, the newest changes, crash robustness and the
+installer. Fixed in v1.7.4:
+
+| Finding | Fix |
+|---|---|
+| A respawned ship could inherit the velocity and turn history of a deleted ship whose NetworkAI had the same address, and was pulled towards where that ship had died | `velo.c` and `orient.c` drop the history at a proxy's first update and use none before it |
+| The owner of a phaser bank did not report when only the bank's target changed | the target is part of the change check and of the reliable report's deduplication |
+| A remote bank aimed at a target's centre when the start-firing command (with the point on the target) arrived after the direct report, and kept that aim | the point is taken from the weapon system's target list once it is there |
+| A bank of an owner who lost the connection kept firing on the other computers until the game removed the ship (up to 45 s) | reports expire after 20 s of silence (the longest beams measured last about 9 s) |
+| A player who rejoined got the same object IDs and a new sequence starting at 1, which the others rejected | after 20 s without a report a ship's sequence starts over |
+| A replay waiting for one ship could be taken by a predicted hit on another | no prediction for a torpedo whose replay is pending elsewhere; the script counts a replay only on its target |
+| Direct channel: a host took HELLO from any address, leaking its players' addresses; packets of another version reached the game's network code; the channel kept the role, the socket and the peers of the previous game; it followed any socket the game sent from (GameSpy); a peer behind a NAT that maps each destination to its own port was unreachable | HELLO only from machines the game sends to; every `BCMPFX` packet is filtered out; everything resets when the game ends; the busiest game socket carries the channel; a client takes a peer's port from its HELLO |
+| The host took a client's phaser report for any ship | only for a ship of the sender (its player ID; after a mission restart the game's "ship of this player" can still be the previous ship) |
+| A host with `TorpedoHitAuthority=0` still made its clients wait for hit reports | it says so (new message), and its clients keep their own collisions |
+| The script's clock counted from Windows start and wrapped after 24.8 days of uptime | it counts from the game's start (the test telemetry keeps the shared clock) |
+| The Python tick could start before the interpreter was up on a slow start | it waits for the game's first import too |
+| `FixDedicatedObjectIds` needed the script layer; `SnapNewShips` needed `FixProxyFirstFrame` without saying so; a dedicated server allowed a sixteenth player in its own ID range | the dedicated fix runs on its own; the log says when `SnapNewShips` cannot work; a dedicated server allows at most 15 players |
+| A phaser mask with bank 31 overflowed the script's number parser (mod ships with 32 banks) | masks are passed signed |
+| The crash log could print stack garbage | fixed |
+| Installer: another mod's `dinput.dll` was moved away before our files were written, a failed update could leave a mix of versions, a failed restore at uninstall reported success, an over-long path was copied unchecked | both files are written first and everything is put back on failure; the restore failure is an error; long paths are rejected |
+
+Not changed: the owner reports one target per ship (the test telemetry never saw banks of one ship
+on two targets, also not the starbase's); a replayed torpedo hit point is relative to the target's
+position when the report arrives (an error of about speed × latency, 0.5 units at 60 ms).
+
+## v1.7.4 release check
+
+Exact release build (`dinput.dll` sha256 518c1b1d…), default settings. Mean / 95th percentile,
+backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.07 / 0.13, 0.0 % | 0.05 / 0.10, 0.0 % | – | 5 of 5 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.21, 0.0 % | 0.07 / 0.16, 0.0 % | – | 6 of 6 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.10, 0.0 % | 0.05 / 0.09, 0.0 % | 0.07 / 0.15, 0.0 % | 82 of 82 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.10, 0.0 % | 0.04 / 0.09, 0.0 % | 0.07 / 0.15, 0.0 % | 80 of 80 |
+| 5 players against 5 AI ships | 0.04 / 0.11, 0.1 % (with the AI ships) | 0.05 / 0.10, 0.0 % | 0.07 / 0.14, 0.0 % | 274 of 278 |
+| dedicated server + 10 clients | – | 0.06 / 0.14, 0.0 % | 0.08 / 0.19, 0.1 % | 151 of 152 |
+| starbase mission, 6 players | 0.02 / 0.09, 0.0 % (with the starbase) | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.1 % | 193 of 193 |
+
+Phasers: beams shown by the other peers 99.9 % and 99.7 % (six players), 99.6 % (dedicated), 99.9 %
+(starbase mission); in the AI run 2724 of 2724 of the AI ships' beams and 976 of 976 of the players'
+(v1.7.3: 96.0 % of the AI ships' beams, #30). Bank firings 98.9–100 %, start delay median 73–82 ms.
+Ships that appeared on a peer were at most 0.3–0.7 units off 0.25 s later. The starbase mission
+showed no starbase hit that the host did not have. Lowest frame rate over 5 s: 24.4 (dedicated run,
+eleven instances), 38–110 elsewhere; no instance stalled; at most 406 event handlers per instance,
+1104 on the host that flies five AI ships (v1.7.3: 1124). Mixed game (v1.7.4 host; v1.7.3, v1.7.2
+and two v1.7.4 clients; one original): among the v1.7.x players phaser beams 100 % and bank firings
+99.6–100 %, torpedo hits 97.7–100 %, positions 0.06–0.09 (the v1.7.2 client fired no phasers, as the
+client in its place in the v1.7.3 check). The original client froze 5 s after its start in the
+game's script error console (the bug `NoScriptErrorConsole` fixes); in a run with the script before
+its last change it played and showed 87 of 95 torpedo hits. Kick test: peak error median 3.5, 90th
+percentile 4.4, max 5.6 (v1.7.3: 3.4, 4.3, 5.4). Join test: every client saw every ship. Starbase
+mission with forced damage (300 s, three restarts): no crash. Installer: update from v1.7.3 kept the
+settings and installed the new files; a fresh install over another mod's `dinput.dll` saved it,
+and uninstalling put it back; with the installed script locked by another program the update
+stopped with "Nothing was changed", v1.7.3 stayed complete, and the update worked once the file
+was free. No crashes and no script errors of bcmpfix (the starbase mission's own `KeyError` is
+logged on every client).

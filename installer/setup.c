@@ -172,6 +172,26 @@ static DWORD write_file(const wchar_t *p, const void *data, DWORD size)
     return 0;
 }
 
+/* the payload as <p>.bcmpfix_tmp, for a later commit (MoveFileEx onto p) */
+static DWORD stage_file(const wchar_t *p, const void *data, DWORD size, wchar_t *tmp)
+{
+    HANDLE h;
+    DWORD n = 0, err;
+    _snwprintf(tmp, PATHLEN - 1, L"%s.bcmpfix_tmp", p);
+    tmp[PATHLEN - 1] = 0;
+    h = CreateFileW(tmp, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (h == INVALID_HANDLE_VALUE)
+        return GetLastError();
+    if (!WriteFile(h, data, size, &n, NULL) || n != size) {
+        err = GetLastError();
+        CloseHandle(h);
+        DeleteFileW(tmp);
+        return err ? err : ERROR_WRITE_FAULT;
+    }
+    CloseHandle(h);
+    return 0;
+}
+
 static const void *resource(int id, DWORD *size)
 {
     HRSRC r = FindResourceW(NULL, MAKEINTRESOURCEW(id), MAKEINTRESOURCEW(10) /* RT_RCDATA */);
@@ -327,7 +347,8 @@ static void normalize(wchar_t *dir)
 {
     wchar_t full[PATHLEN];
     size_t n;
-    if (GetFullPathNameW(dir, PATHLEN, full, NULL))
+    DWORD r = GetFullPathNameW(dir, PATHLEN, full, NULL);
+    if (r > 0 && r < PATHLEN) /* a longer result did not fit and is not in full */
         wcscpy(dir, full);
     n = wcslen(dir);
     while (n > 3 && dir[n - 1] == L'\\')
@@ -432,39 +453,80 @@ static int pick_folder(wchar_t *out)
 
 static int install(const wchar_t *dir)
 {
-    wchar_t p[PATHLEN], bak[PATHLEN];
+    wchar_t p[PATHLEN], bak[PATHLEN], old[PATHLEN], sp[PATHLEN], sold[PATHLEN], tmpDll[PATHLEN], tmpScript[PATHLEN];
     const void *data;
     DWORD size, err;
+    int movedForeign = 0, hadOld = 0, hadOldScript = 0;
     join(p, dir, L"scripts");
     if (!dir_exists(p) && !CreateDirectoryW(p, NULL)) {
         say(L"Cannot create %s: %s.", p, errtext(GetLastError()));
         return EXIT_ERROR;
     }
-    /* dinput.dll: keep another mod's proxy as a backup */
+    /* write both payload files first; nothing in the game folder changes before both are there */
     join(p, dir, L"dinput.dll");
     join(bak, dir, BACKUP_DLL);
+    join(old, dir, L"dinput.dll.bcmpfix_old");
+    join(sp, dir, L"scripts\\bcmpfix_mp.py");
+    join(sold, dir, L"scripts\\bcmpfix_mp.py.bcmpfix_old");
+    data = resource(IDR_DLL, &size);
+    if (!data || (err = stage_file(p, data, size, tmpDll)) != 0) {
+        say(L"Cannot write %s: %s.", tmpDll, data ? errtext(err) : L"payload missing");
+        return EXIT_ERROR;
+    }
+    data = resource(IDR_SCRIPT, &size);
+    if (!data || (err = stage_file(sp, data, size, tmpScript)) != 0) {
+        say(L"Cannot write %s: %s.", tmpScript, data ? errtext(err) : L"payload missing");
+        DeleteFileW(tmpDll);
+        return EXIT_ERROR;
+    }
+    /* dinput.dll: keep another mod's proxy as a backup, our older version until the end */
     if (file_exists(p) && !is_our_dll(p)) {
         if (file_exists(bak)) {
             say(L"%s belongs to another mod, and %s already exists. Move one of them away and try again.", p, bak);
+            DeleteFileW(tmpDll);
+            DeleteFileW(tmpScript);
             return EXIT_ERROR;
         }
         if (!MoveFileExW(p, bak, 0)) {
             say(L"Cannot back up %s: %s.", p, errtext(GetLastError()));
+            DeleteFileW(tmpDll);
+            DeleteFileW(tmpScript);
             return EXIT_ERROR;
         }
+        movedForeign = 1;
+    } else if (file_exists(p)) {
+        DeleteFileW(old);
+        hadOld = MoveFileExW(p, old, 0);
+    }
+    if (file_exists(sp)) {
+        DeleteFileW(sold);
+        hadOldScript = MoveFileExW(sp, sold, 0);
+    }
+    if (!MoveFileExW(tmpDll, p, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH) ||
+        !MoveFileExW(tmpScript, sp, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH)) {
+        err = GetLastError();
+        /* put everything back as it was */
+        DeleteFileW(tmpDll);
+        DeleteFileW(tmpScript);
+        if (hadOld)
+            MoveFileExW(old, p, MOVEFILE_REPLACE_EXISTING);
+        else if (!movedForeign)
+            DeleteFileW(p);
+        if (hadOldScript)
+            MoveFileExW(sold, sp, MOVEFILE_REPLACE_EXISTING);
+        else
+            DeleteFileW(sp);
+        if (movedForeign) {
+            DeleteFileW(p);
+            MoveFileExW(bak, p, 0);
+        }
+        say(L"Cannot install into %s: %s. Nothing was changed.", dir, errtext(err));
+        return EXIT_ERROR;
+    }
+    DeleteFileW(old);
+    DeleteFileW(sold);
+    if (movedForeign)
         say(L"Another mod's dinput.dll was saved as %s. Uninstalling bcmpfix puts it back.", BACKUP_DLL);
-    }
-    data = resource(IDR_DLL, &size);
-    if (!data || (err = write_file(p, data, size)) != 0) {
-        say(L"Cannot write %s: %s.", p, data ? errtext(err) : L"payload missing");
-        return EXIT_ERROR;
-    }
-    join(p, dir, L"scripts\\bcmpfix_mp.py");
-    data = resource(IDR_SCRIPT, &size);
-    if (!data || (err = write_file(p, data, size)) != 0) {
-        say(L"Cannot write %s: %s.", p, data ? errtext(err) : L"payload missing");
-        return EXIT_ERROR;
-    }
     join(p, dir, L"scripts\\bcmpfix_mp.pyc"); /* the game recompiles it */
     DeleteFileW(p);
     join(p, dir, L"bcmpfix.ini");
@@ -506,10 +568,14 @@ static int uninstall(const wchar_t *dir)
         }
     }
     if (file_exists(bak)) {
-        if (!file_exists(p) && MoveFileExW(bak, p, 0))
-            say(L"Restored the previous dinput.dll.");
-        else
+        if (file_exists(p)) {
             say(L"The previous dinput.dll is still saved as %s.", BACKUP_DLL);
+        } else if (MoveFileExW(bak, p, 0)) {
+            say(L"Restored the previous dinput.dll.");
+        } else {
+            say(L"Cannot restore the previous dinput.dll from %s: %s.", BACKUP_DLL, errtext(GetLastError()));
+            rc = EXIT_ERROR;
+        }
     }
     for (i = 0; i < (int)(sizeof(k_files) / sizeof(k_files[0])); i++) {
         join(p, dir, k_files[i]);

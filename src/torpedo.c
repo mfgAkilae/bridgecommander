@@ -22,7 +22,7 @@ static BYTE *g_tramp;
 static unsigned long g_suppressed, g_allowed, g_pushedOut;
 /* Set by the script layer once the host has answered a ping, i.e. runs bcmpfix
  * too. Without a modded host nobody would report hits, so keep stock behaviour. */
-static unsigned long g_predicted, g_advanced;
+static unsigned long g_predicted, g_advanced, g_bystander;
 static int g_active;
 
 void torpedo_set_active(int on)
@@ -39,6 +39,7 @@ static struct {
     int mode; /* 0 = local decision, 1 = host says shield hit, 2 = host says hull hit */
     int hasStart;
     float start[3]; /* replay start point outside the target (segment start for the hit test) */
+    DWORD target;   /* replay: the ship the host reported the hit on (0 = any ship) */
 } g_auth[MAXAUTH];
 
 /* The hit test (ship vtable +0x140, 0x005AE730) checks the segment from the
@@ -56,12 +57,13 @@ void torpedo_authorize(DWORD torpId)
 
 static int auth_slot(DWORD torpId);
 
-void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z)
+void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z, DWORD target)
 {
     int i;
     torpedo_authorize_mode(torpId, mode);
     i = auth_slot(torpId);
     if (i >= 0) {
+        g_auth[i].target = target;
         g_auth[i].hasStart = 1;
         g_auth[i].start[0] = x;
         g_auth[i].start[1] = y;
@@ -85,6 +87,7 @@ void torpedo_authorize_mode(DWORD torpId, int mode)
     g_auth[slot].expires = now + 2000;
     g_auth[slot].mode = mode;
     g_auth[slot].hasStart = 0;
+    g_auth[slot].target = 0;
 }
 
 /* slot of a valid authorisation, or -1 */
@@ -222,6 +225,50 @@ static int adv_take(DWORD id, float *p)
     return 0;
 }
 
+/* The ship a torpedo was fired at (0 = none): the fire message's target ID, set by the spawn
+ * (0x0057D110 for remote copies) */
+#define TORP_TARGET 0x118
+
+/* PredictTorpedoHits only for the ship the torpedo was fired at. A torpedo that touches another
+ * ship on its way (issue #31: the defenders' torpedoes pass close to their own starbase) hits it
+ * on some computers and flies past on others, because every computer flies its own copy. A copy
+ * that predicted such a hit was spent, so the host's real hit further on could not be replayed.
+ * Such collisions now wait for the host's report like before PredictTorpedoHits. */
+#define MAXBY 64
+static DWORD g_byIds[MAXBY]; /* torpedoes that touched a ship they were not fired at */
+static int g_byNext;
+
+static int by_seen(DWORD id)
+{
+    int i;
+    for (i = 0; i < MAXBY; i++)
+        if (g_byIds[i] == id)
+            return 1;
+    return 0;
+}
+
+static int predict_on(BYTE *torp, BYTE *ship)
+{
+    DWORD target = *(DWORD *)(torp + TORP_TARGET), id = *(DWORD *)(torp + 4);
+    if (g_cfg.predictAnyHit)
+        return 1;
+    if (target && target != *(DWORD *)(ship + 4)) {
+        g_bystander++;
+        if (!by_seen(id)) {
+            g_byIds[g_byNext] = id;
+            g_byNext = (g_byNext + 1) % MAXBY;
+        }
+        return 0;
+    }
+    /* a torpedo that brushed past another ship may have hit that ship on the host: its hit on
+     * its target waits for the host's report too */
+    if (by_seen(id)) {
+        g_bystander++;
+        return 0;
+    }
+    return 1;
+}
+
 static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
 {
     (void)edx;
@@ -230,16 +277,26 @@ static void __fastcall hk_DetectCollision(void *torp, void *edx, void *other)
         if (((PFN_IsTypeOf)vt[2])(other, 0, CT_SHIP)) {
             DWORD id = *(DWORD *)((BYTE *)torp + 4);
             BYTE one = 1, two = 2;
-            int slot = auth_slot(id);
-            int mode = slot < 0 ? -1 : g_auth[slot].mode;
+            int slot = auth_slot(id), elsewhere = 0;
+            int mode;
             float *pct = NULL, saved[6];
             int i;
+            /* a replay is released for the ship the host reported only: the copy may still
+             * overlap another ship (issue #31: it flew through the starbase), which would
+             * take the hit. Nor may that other ship take a predicted hit: the copy belongs
+             * to the replay. */
+            if (slot >= 0 && g_auth[slot].target && g_auth[slot].target != *(DWORD *)((BYTE *)other + 4) &&
+                !g_cfg.replayAnyShip) {
+                slot = -1;
+                elsewhere = 1;
+            }
+            mode = slot < 0 ? -1 : g_auth[slot].mode;
             if (mode < 0) {
                 /* PredictTorpedoHits: show our own collision at once instead of waiting one
                  * latency for the host's report; the script matches the report to it. Not on
                  * an exploding ship (see shield_facings). One effect, then the copy is spent. */
-                if (g_cfg.predictHits && *(float *)((BYTE *)other + SHIP_DEATH_TIME) >= 3.0e38f &&
-                    !shields_near_threshold(other)) {
+                if (g_cfg.predictHits && !elsewhere && *(float *)((BYTE *)other + SHIP_DEATH_TIME) >= 3.0e38f &&
+                    !shields_near_threshold(other) && predict_on((BYTE *)torp, (BYTE *)other)) {
                     BYTE *t = (BYTE *)torp;
                     float dmgBefore = *(float *)(t + 0x144), sp[3];
                     if (adv_take(*(DWORD *)(t + 4), sp))
@@ -374,6 +431,11 @@ unsigned long torpedo_pushed_out(void)
 unsigned long torpedo_predicted(void)
 {
     return g_predicted;
+}
+
+unsigned long torpedo_bystander(void)
+{
+    return g_bystander;
 }
 
 unsigned long torpedo_advanced(void)

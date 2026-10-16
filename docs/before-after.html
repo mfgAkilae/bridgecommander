@@ -79,10 +79,10 @@ col.c-problem { width: 44%; }
   <header>
     <div class="eyebrow">Star Trek: Bridge Commander 1.1 · multiplayer</div>
     <h1>bcmpfix: what changed, before and after</h1>
-    <p class="lede">Every fix from v1.0.0 to v1.7.3 and the current main branch, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
+    <p class="lede">Every fix from v1.0.0 to v1.7.4, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
     <div class="meta">
       <a href="https://github.com/mfgAkilae/bridgecommander">Repository</a>
-      <a href="https://github.com/mfgAkilae/bridgecommander/releases/tag/v1.7.3">Release v1.7.3</a>
+      <a href="https://github.com/mfgAkilae/bridgecommander/releases/tag/v1.7.4">Release v1.7.4</a>
       <a href="https://github.com/mfgAkilae/bridgecommander/blob/main/docs/measurements.md">Full measurements</a>
     </div>
   </header>
@@ -101,6 +101,7 @@ col.c-problem { width: 44%; }
         <tr><td>Knockback: a hit pushes a ship off its nose</td><td class="num before">up to 40 units, seconds</td><td class="num after">max 5.4, at once</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/19">v1.3 #19</a></td></tr>
         <tr><td>Host passes on client ships (3+ players)</td><td class="num before">1.1 units</td><td class="num after">≈0.1</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/10">v1.1 #10</a></td></tr>
         <tr><td>A ship that just appeared slides into place (join, respawn)</td><td class="num before">up to 110 units, 1 s</td><td class="num after">≤1.5 after 0.25 s</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/29">v1.7.3 #29</a></td></tr>
+        <tr><td>A respawned ship inherits a dead ship's movement (0.25 s after it appeared)</td><td class="num before">up to 95 units</td><td class="num after">none over 5</td><td class="ver">v1.7.4</td></tr>
         <tr><td>Distant ships get one update per second beyond</td><td class="num before">343 units</td><td class="num after">1029 units</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/20">v1.3 #20</a></td></tr>
       </tbody>
     </table></div>
@@ -116,6 +117,8 @@ col.c-problem { width: 44%; }
         <tr><td>Hits seen by all ten clients</td><td class="num before">51 %</td><td class="num after">94–100 %</td><td class="ver">v1.0–v1.5</td></tr>
         <tr><td>When a client shows a hit</td><td class="num before">one latency after the host</td><td class="num after">≈65 ms before the host</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/12">v1.5 #12</a></td></tr>
         <tr><td>Torpedoes of other players left the tube sideways, without launch sound</td><td class="num before">flags swapped</td><td class="num after">shooter's values</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/8">v1.3 #8 #9</a></td></tr>
+        <tr><td>Starbase mission: hits on the host seen by all clients</td><td class="num before">87.4 %</td><td class="num after">96.8 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/31">v1.7.4 #31</a></td></tr>
+        <tr><td>Starbase mission: starbase hits only a client showed</td><td class="num before">503 in 5 runs</td><td class="num after">1 in 4 runs</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/31">v1.7.4 #31</a></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -131,7 +134,7 @@ col.c-problem { width: 44%; }
         <tr><td>A beam the shooter hit is shown on the other screens</td><td class="num before">84–87 %</td><td class="num after">99.6–100 %</td><td class="ver">v1.6–v1.7</td></tr>
         <tr><td>Beam starts on the other screens after the shooter's</td><td class="num before">0.27 s</td><td class="num after">0.06–0.08 s</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/23">v1.7.0 #23</a></td></tr>
         <tr><td>AI ships: beams shown / same banks firing</td><td class="num before">91.7 % / 70.1 %</td><td class="num after">100 % / 99.4 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/28">v1.7.3 #28</a></td></tr>
-        <tr><td>Another screen keeps firing at the previous target (AI beams missing)</td><td class="num before">0.46 %</td><td class="num after">0.02 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/30">main #30</a></td></tr>
+        <tr><td>Another screen keeps firing at the previous target (AI beams missing)</td><td class="num before">0.46 %</td><td class="num after">0.02 %</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/30">v1.7.4 #30</a></td></tr>
       </tbody>
     </table></div>
   </section>
@@ -150,6 +153,7 @@ col.c-problem { width: 44%; }
         <tr><td>Dedicated server: the first player's ship</td><td class="num before">invisible</td><td class="num after">visible</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/24">v1.7.1 #24</a></td></tr>
         <tr><td>Freezes with ten players (event handlers doubling)</td><td class="num before">up to 37 s, 98667 handlers</td><td class="num after">none, ≈400</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/27">v1.7.2 #27</a></td></tr>
         <tr><td>Script error in windowed mode</td><td class="num before">game waits in a debug console</td><td class="num after">logged, game continues</td><td class="ver">v1.2</td></tr>
+        <tr><td>Starbase mission restarts: clients crash</td><td class="num before">2–4 of 5 in every test run</td><td class="num after">none</td><td class="ver">v1.7.4</td></tr>
       </tbody>
     </table></div>
   </section>
@@ -158,7 +162,7 @@ col.c-problem { width: 44%; }
     <h2>Still open</h2>
     <ul>
       <li>Real internet games behind NAT routers and firewalls are not tested yet (<a href="https://github.com/mfgAkilae/bridgecommander/issues/26">#26</a>).</li>
-      <li>Starbase mission: torpedoes that pass close to the starbase hit it on some computers only (<a href="https://github.com/mfgAkilae/bridgecommander/issues/31">#31</a>). The damage is the host's.</li>
+      <li>Starbase mission restarts: a ship picked while the restart was still running stayed on the host without an owner (seen with the scripted test pilot only).</li>
     </ul>
     <p>Test bed: up to eleven game instances in one Windows Sandbox, scripted pilots, latency and loss simulated per direction. Includes a 30-minute game with a dedicated server, ten clients and two AI ships without stalls, crashes or memory growth.</p>
   </div>

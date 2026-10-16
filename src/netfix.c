@@ -521,12 +521,15 @@ static void __fastcall hk_FrameTimer(void *self, void *edx)
         g_lastFrame = (t - g_lastFrame > 2 * period) ? t : g_lastFrame + period;
     }
     o_FrameTimer(self, 0);
+    join_frame();
     if (g_tickCode[0]) {
         double t = now_sec();
         static int ready;
         static int calls, fails;
-        /* Python is initialised long before the main menu; wait a fixed delay */
-        if (!ready && t >= g_cfg.pythonTickDelay) {
+        /* Python is initialised long before the main menu; wait a fixed delay, and for the
+         * game's first import when the import hook is in (a slow start must not run the
+         * module init on an interpreter that is not up yet) */
+        if (!ready && t >= g_cfg.pythonTickDelay && (g_pythonUp || !g_cfg.mpScript)) {
             ready = 1;
             logf("starting python tick: %s", g_tickCode);
             if (pyext_init() && g_cfg.testMode && g_cfg.pythonRedirect) {
@@ -548,7 +551,6 @@ static void __fastcall hk_FrameTimer(void *self, void *edx)
                 logf("python stdout redirect: %d", r);
             }
         }
-        join_frame();
         phaser_frame(ready);
         if (ready && t >= g_nextTick) {
             int r;
@@ -596,7 +598,7 @@ void netfix_install(void)
             _snprintf(g_tickCode + n, sizeof(g_tickCode) - 1 - n, "import %.*s\n%s()\n",
                       (int)(dot - g_cfg.pythonTick), g_cfg.pythonTick, g_cfg.pythonTick);
     }
-    if (g_cfg.maxFps > 0 || g_tickCode[0]) {
+    if (g_cfg.maxFps > 0 || g_tickCode[0] || g_cfg.fixDedicatedIds) {
         redirect_call(ADDR_CALL_FRAMETIMER, (void *)hk_FrameTimer, (void **)&o_FrameTimer, ADDR_FRAMETIMER,
                       "frame hook (FPS limit / python tick)");
     }

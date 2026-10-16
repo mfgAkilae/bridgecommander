@@ -60,6 +60,7 @@ typedef void(__fastcall *PFN_Stop)(void *bank, void *edx);
 typedef int(__cdecl *PFN_PyRunSimpleString)(const char *);
 
 #define MAXREMOTE 32
+#define REPORT_TIMEOUT_S 20.0 /* beams last up to about 9 s (AI ships): longer silence means the owner left */
 static struct {
     DWORD ship;
     DWORD bits;
@@ -70,6 +71,7 @@ static struct {
     DWORD seq;             /* sequence number of the last report applied (direct or relayed) */
     int hasSeq;
     double used;           /* last report or frame with the ship alive: a full table drops the oldest */
+    double reported;       /* last report: an owner that went silent (lost connection) no longer fires */
     DWORD firing;          /* test telemetry: banks firing at the end of the last frame */
     double retry[32];      /* next start attempt per bank (a failed Fire is retried every 100 ms) */
     unsigned long fed[32]; /* frame of the last Fire call (the weapon system feeds firing banks) */
@@ -91,7 +93,7 @@ static unsigned long g_forcedArc, g_skippedWait, g_driven, g_skippedStopHit;
 #define MAXOWN 17
 static struct {
     DWORD ship, bits, target, hits, on, seq;
-    DWORD sentBits, sentHits, sentOn, other;
+    DWORD sentBits, sentHits, sentOn, sentTarget, other;
     int sentValid, pending;
 } g_own[MAXOWN];
 static DWORD g_aiShips[MAXOWN - 1];
@@ -198,6 +200,8 @@ static void enforce_remote(void)
             continue;
         n = *(int *)(sys + SUB_NUM_CHILDREN);
         arr = *(BYTE ***)(sys + SUB_CHILDREN);
+        if (g_remote[s].bits && t - g_remote[s].reported > REPORT_TIMEOUT_S)
+            g_remote[s].bits = 0; /* no report for long: the owner is gone or lost its connection */
         for (i = 0; i < n && i < 32 && arr; i++) {
             BYTE *b = arr[i];
             int want = (g_remote[s].bits >> i) & 1;
@@ -292,6 +296,11 @@ void phaser_set_remote_seq(DWORD ship, DWORD seq, DWORD bits, DWORD target, DWOR
     if (own && *(DWORD *)(own + 4) == ship)
         return;
     i = remote_slot(ship, 1);
+    /* after a long silence the sender may be a new connection (a player who rejoined gets the
+     * same object IDs again) whose sequence starts over */
+    if (g_remote[i].hasSeq && now_sec() - g_remote[i].reported > REPORT_TIMEOUT_S)
+        g_remote[i].hasSeq = 0;
+    g_remote[i].reported = now_sec();
     if (g_remote[i].hasSeq && (long)(seq - g_remote[i].seq) <= 0 && (long)(g_remote[i].seq - seq) < 100000) {
         g_staleReports++;
         return;
@@ -324,6 +333,7 @@ int phaser_take(DWORD *ship, DWORD *bits, DWORD *target, DWORD *hits, DWORD *on,
             g_own[k].sentBits = g_own[k].bits;
             g_own[k].sentHits = g_own[k].hits;
             g_own[k].sentOn = g_own[k].on;
+            g_own[k].sentTarget = g_own[k].target;
             g_own[k].sentValid = 1;
             g_sent++;
             return 1;
@@ -369,7 +379,8 @@ static int report_ship(int k, BYTE *ship)
         tlog_printf("PM %ld %lu %lu %lu %lu", tlog_ms(), id, bits, other, target);
         g_own[k].other = other;
     }
-    if (id == g_own[k].ship && bits == g_own[k].bits && hits == g_own[k].hits && on == g_own[k].on)
+    if (id == g_own[k].ship && bits == g_own[k].bits && hits == g_own[k].hits && on == g_own[k].on &&
+        (!bits || target == g_own[k].target))
         return 0;
     if (id != g_own[k].ship)
         g_own[k].sentValid = 0;
@@ -382,7 +393,8 @@ static int report_ship(int k, BYTE *ship)
     tlog_printf("PO %ld %lu %lu %lu %lu", tlog_ms(), id, bits, hits, on);
     if (direct_enabled())
         direct_send_banks(id, g_own[k].seq, bits, target, hits, on);
-    if (g_own[k].sentValid && bits == g_own[k].sentBits && hits == g_own[k].sentHits && on == g_own[k].sentOn) {
+    if (g_own[k].sentValid && bits == g_own[k].sentBits && hits == g_own[k].sentHits && on == g_own[k].sentOn &&
+        (!bits || target == g_own[k].sentTarget)) {
         g_own[k].pending = 0;
         return 0;
     }
@@ -454,7 +466,11 @@ static char __fastcall hk_Fire(void *bank, void *edx, int a1, int a2)
              * without stopping the bank. Our copy passes the arc test (forced, hk_Arc), so it
              * kept the old target while the owner's bank had switched: the owner's beam hit one
              * ship and ours another or nothing. The point on the target comes with it (aim_at). */
-            if (g_remote[slot].target && *(DWORD *)(b + BANK_TARGET) != g_remote[slot].target) {
+            if (g_remote[slot].target && *(DWORD *)(b + BANK_TARGET) == g_remote[slot].target &&
+                g_cfg.phaserOwnerTarget && g_cfg.phaserSync >= 3 && !*(DWORD *)(b + BANK_TARGET + 4) &&
+                !*(DWORD *)(b + BANK_TARGET + 8) && !*(DWORD *)(b + BANK_TARGET + 12))
+                aim_at(b, g_remote[slot].target); /* the centre: maybe the list has the point by now */
+            else if (g_remote[slot].target && *(DWORD *)(b + BANK_TARGET) != g_remote[slot].target) {
                 if (g_cfg.testMode && g_diagWrongTgt[slot][idx] != *(DWORD *)(b + BANK_TARGET)) {
                     g_diagWrongTgt[slot][idx] = *(DWORD *)(b + BANK_TARGET);
                     tlog_printf("PG %ld %lu %d %lu %lu %d", tlog_ms(), *(DWORD *)(ship + 4), idx,

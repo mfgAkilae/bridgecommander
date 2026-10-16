@@ -38,6 +38,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Knockback: a hit pushes a ship off its nose | up to 40 units, seconds | max 5.4, at once | v1.3 (#19) |
 | Host passes on client ships (3+ players) | 1.1 units | ≈0.1 | v1.1 (#10) |
 | A ship that just appeared slides into place (join, respawn) | up to 110 units, 1 s | ≤1.5 after 0.25 s | v1.7.3 (#29) |
+| A respawned ship inherits a dead ship's movement (0.25 s after it appeared) | up to 95 units | none over 5 | v1.7.4 |
 | Distant ships get one update per second beyond | 343 units | 1029 units | v1.3 (#20) |
 
 **Torpedoes**
@@ -48,6 +49,8 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Hits seen by all ten clients | 51 % | 94–100 % | v1.0–v1.5 |
 | When a client shows a hit | one latency after the host | ≈65 ms before the host | v1.5 (#12) |
 | Torpedoes of other players left the tube sideways, without launch sound | flags swapped | shooter's values | v1.3 (#8, #9) |
+| Starbase mission: hits on the host seen by all clients | 87.4 % | 96.8 % | v1.7.4 (#31) |
+| Starbase mission: starbase hits only a client showed | 503 in 5 runs | 1 in 4 runs | v1.7.4 (#31) |
 
 **Phasers**
 
@@ -58,7 +61,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | A beam the shooter hit is shown on the other screens | 84–87 % | 99.6–100 % | v1.6–v1.7 |
 | Beam starts on the other screens after the shooter's | 0.27 s | 0.06–0.08 s | v1.7.0 (#23) |
 | AI ships: beams shown / same banks firing | 91.7 % / 70.1 % | 100 % / 99.4 % | v1.7.3 (#28) |
-| Another screen keeps firing at the previous target (AI beams missing) | 0.46 % | 0.02 % | main (#30) |
+| Another screen keeps firing at the previous target (AI beams missing) | 0.46 % | 0.02 % | v1.7.4 (#30) |
 
 **Network, joining, stability**
 
@@ -72,6 +75,7 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Dedicated server: the first player's ship | invisible | visible | v1.7.1 (#24) |
 | Freezes with ten players (event handlers doubling) | up to 37 s, 98667 handlers | none, ≈400 | v1.7.2 (#27) |
 | Script error in windowed mode | game waits in a debug console | logged, game continues | v1.2 |
+| Starbase mission restarts: clients crash | 2–4 of 5 in every test run | none | v1.7.4 |
 
 ## Installation
 
@@ -149,6 +153,9 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
 18. **Phaser banks and hits decided per computer.** Only the start and stop of firing are sent;
     every computer decides per bank whether it can fire, and when its beam reaches the target. Banks
     fire on one screen and not on another, and a hit the shooter sees can do no damage on the host.
+19. **Crashes at a mission restart.** When a mission starts over (the starbase mission after the
+    starbase was destroyed), clients can crash on the frame they get their new ship: the weapons
+    display and a mission event handler read through empty pointers.
 
 What bcmpfix does about it:
 
@@ -172,6 +179,7 @@ What bcmpfix does about it:
 | 16 | remote ships follow the velocity measured from their received positions, along its estimated turn, and are moved exactly by it; their nose follows the reported one (v1.4.0) |
 | 17 | clients advance such copies by the message latency and show their own copy's hit at once; the host's report confirms it (v1.5.0) |
 | 18 | the owner reports its firing banks and which beams are on the target; the other computers fire exactly those banks and show a hit when the owner's beam hits (`PhaserHitAuthority`, v1.6.0); they start a reported bank at once, and the reports also go straight from player to player instead of only through the host (`DirectPhaserReports`, v1.7.0) |
+| 19 | the two reads are skipped when the pointer is empty (`FixRestartCrashes`, v1.7.4) |
 
 ## Verification
 
@@ -258,12 +266,18 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, such as AI ships of
   mods or the starbase of the starbase mission (tested only with AI ships the test pilot creates).
   Before, every computer decided their firing itself: in a test with five AI ships 8.3 % of their
-  beams were missing on another screen, now none (#28). Since #30 (in `main`, not yet released) a
-  remote bank also aims where its owner's bank aims: before, the other screens could keep firing
-  at the previous target (missing AI beams 0.46 % → 0.02 %).
+  beams were missing on another screen, now none (#28). Since v1.7.4 a remote bank also aims where
+  its owner's bank aims: before, the other screens could keep firing at the previous target
+  (missing AI beams 0.46 % → 0.02 %, #30).
 - The starbase mission (Mission 5) was tested with six players: positions and phasers (also the
-  starbase's) are in sync, but torpedoes that pass close to the starbase hit it on some computers
-  only (154–170 of 170–183 hits seen by all, #31).
+  starbase's) are in sync. Torpedoes that passed close to the starbase hit it on some computers
+  only; since v1.7.4 a client predicts a hit only on the ship the torpedo was fired at, and a replay
+  hits only the ship the host reported (hits seen by all clients 87.4 % → 96.8 %, #31). When the
+  mission restarted after the starbase was destroyed, two to four of five clients crashed in every
+  test run, also with the original game; fixed in v1.7.4. The test pilot picks its new ship by
+  script and sometimes did so while the restart was still running: that ship then stayed on the
+  host without an owner, and the player's next ship was missing on the other computers. Whether
+  players who pick their ship in the menu can run into this was not tested.
 - Since v1.7.3 a ship that appears on a screen (a player joins or respawns, an AI ship is created)
   starts at the first position received for it. Before, it started at the position of its "object
   created" message, which can be seconds old, and slid into place for up to a second (#29).

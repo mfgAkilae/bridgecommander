@@ -38,6 +38,9 @@ typedef struct Config {
     int fixGhostShip;       /* re-place a ship created before the joining client had its mission set */
     int fixDedicatedIds;    /* a dedicated server numbers its objects from slot 15, not the first client's slot 0 */
     int fixConditionInRange; /* script: ConditionInRange registers its group handlers once (issue #27) */
+    int fixRestartCrashes;  /* two original-game crashes when a mission restarts (join.c) */
+    int replayAnyShip;      /* test switch: a replayed torpedo may hit any ship, not only the reported one */
+    int predictAnyHit;      /* test switch: PredictTorpedoHits also for ships the torpedo was not fired at */
     int phaserOwnerTarget;  /* test switch: remote banks the owner fires aim at the owner's target (issue #30) */
     int snapNewShips;       /* a new remote ship starts at its first received position, not the create message's */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
@@ -101,7 +104,7 @@ void torpedo_install(void);
 void torpedo_trace_install(void);
 void torpedo_authorize(DWORD torpId);
 void torpedo_authorize_mode(DWORD torpId, int mode);
-void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z);
+void torpedo_authorize_start(DWORD torpId, int mode, float x, float y, float z, DWORD target);
 int torpedo_force(void *torp, void *target);
 void lead_set_fire(DWORD objId, int ms);
 int lead_get_fire(DWORD objId);
@@ -111,14 +114,18 @@ void torpedo_set_active(int on);
 void torpedo_stats(unsigned long *suppressed, unsigned long *allowed);
 unsigned long torpedo_pushed_out(void);
 unsigned long torpedo_predicted(void);
+unsigned long torpedo_bystander(void);
 unsigned long torpedo_advanced(void);
 void lead_install(void);
 unsigned long lead_snapped(void);
+extern int g_pythonUp;
 int lead_take_snap(DWORD id);
 void lead_set(DWORD objId, int ms);
 void relay_install(void);
 unsigned long relay_count(void);
 void orient_on_update(BYTE *ai, int leadMs, const float *p0);
+void orient_forget(BYTE *ai);
+void velo_forget(BYTE *ai);
 int orient_predict(BYTE *ai, float *f, float *u);
 int orient_target(BYTE *ai, float *out);
 void velo_on_update(BYTE *ai, int leadMs, const float *p0);

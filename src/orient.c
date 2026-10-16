@@ -93,6 +93,16 @@ static void rotate(const float *v, const float *w, float t, float *out)
 
 /* called by the state update reader hook after every update of this proxy that
  * carried a position (p0: that position, before latency compensation) */
+/* lead.c, at a proxy's first state update: a new proxy may sit at the address of a deleted one
+ * (the tables are keyed by the NetworkAI's address), whose history must not carry over: a
+ * respawned ship was pulled towards where the old one had died */
+void orient_forget(BYTE *ai)
+{
+    int i = slot_of(ai, 0);
+    if (i >= 0)
+        memset(&g_ship[i], 0, sizeof(g_ship[0]));
+}
+
 void orient_on_update(BYTE *ai, int leadMs, const float *p0)
 {
     int i = slot_of(ai, 1);
@@ -150,7 +160,7 @@ int orient_predict(BYTE *ai, float *f, float *u)
 {
     int i = slot_of(ai, 0);
     float h;
-    if (i < 0 || !g_ship[i].valid)
+    if (i < 0 || !g_ship[i].valid || *(float *)(ai + 0x2C) == 0.0f) /* no update for this proxy yet */
         return 0;
     h = g_ship[i].lead + (game_time() - g_ship[i].gotAt);
     if (h < 0.0f)
@@ -197,7 +207,7 @@ int orient_target(BYTE *ai, float *out)
 {
     int i = slot_of(ai, 0), k;
     float h, hc, off[3], fe[3], speed;
-    if (i < 0 || !g_ship[i].valid || !g_ship[i].hasPos)
+    if (i < 0 || !g_ship[i].valid || !g_ship[i].hasPos || *(float *)(ai + 0x2C) == 0.0f)
         return 0;
     speed = *(float *)(ai + 0x54);
     h = g_ship[i].lead + (game_time() - g_ship[i].gotAt);
