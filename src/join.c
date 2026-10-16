@@ -36,10 +36,23 @@
  * and PlayerEnteredSet passes such an event on as it does for an object that is not an
  * ObjectClass.
  *
+ * Ramming damage (original-game bug): in multiplayer only the host applies collision damage.
+ * ShipClass::CollisionEffectHandler (0x005AF9C0) on a client sends a collision of its own ship to the
+ * host (message 0x15, 0x006A17C0): the event whose destination is its own ship, and, when the other
+ * object is not a player's ship (an AI ship, the starbase), also the event whose destination is that
+ * object and whose source is its own ship. Before sending it sets the event's source to NULL
+ * (0x005AFA6C). The host's handler (0x006A2470) accepts a report only when the sender's ship is the
+ * destination or the source, so the second report was always dropped: a client that rammed an AI
+ * ship took damage, the AI ship none. Fix (FixRammingDamage=1): the source stays when it is a ship;
+ * the host's own checks remain (the sender's ship is the source, the destination is no player's
+ * ship, the two objects are less than 26 units apart). A source that is no ship is still cleared
+ * (0x005AFA64).
+ *
  * Logs (test mode / Verbose): MultiplayerGame::ReceiveMessageHandler (0x0069F2A0)
  * processes game messages only once the game has its mission (game+0x70, and +0x3C of
  * that) and drops earlier ones without a trace; this module logs them, the object
  * messages, the objects created from them and the host's broadcasts. */
+#include <stdio.h>
 #include "common.h"
 
 #define ADDR_MP_RECV 0x0069F2A0
@@ -74,6 +87,19 @@ typedef void(__fastcall *PFN_RemoveCheck)(BYTE *watcher, void *edx, int id);
 typedef BYTE *(__cdecl *PFN_ObjCast)(void *obj);
 static void *o_RemoveCheck, *o_ObjCast;
 static unsigned long g_emptyWatchers, g_noSetEvents;
+
+/* test telemetry of ship collisions in multiplayer: a client reports a collision of its own ship
+ * as message 0x15; the host's handler (0x006A2470, called from the receive handler at 0x0069F494)
+ * checks the sender and the distance and posts it as ET_HOST_OBJECT_COLLISION (AddEvent call at
+ * 0x006A25F9). CR = report received (sender's player ID), CA = report applied (source and
+ * destination object IDs). */
+#define ADDR_CALL_COLL_RECV 0x0069F494
+#define ADDR_COLL_RECV 0x006A2470
+#define ADDR_CALL_COLL_ADD 0x006A25F9
+#define ADDR_EVENT_ADD 0x006DA2A0
+typedef void(__fastcall *PFN_CollRecv)(void *game, void *edx, BYTE *msg);
+typedef void(__fastcall *PFN_EventAdd)(void *mgr, void *edx, BYTE *ev);
+static void *o_CollRecv, *o_CollAdd;
 
 /* pieces of the factory 0x005A1F50: object lookup by ID, TGBufferStream on the stack,
  * and the two ObjectClass readers (species byte; position, orientation, velocity, name
@@ -177,6 +203,31 @@ static BYTE *__cdecl hk_Create(BYTE *data, int len)
     return o;
 }
 
+static void __fastcall hk_CollRecv(void *game, void *edx, BYTE *msg)
+{
+    (void)edx;
+    {
+        /* the serialized event: 48 bytes as hex (finds the object IDs and the event type) */
+        int len = 0, i, n;
+        BYTE *d = msg ? ((PFN_GetData)ADDR_MSG_GETDATA)(msg, 0, &len) : NULL;
+        char hex[2 * 48 + 1];
+        n = d ? (len < 48 ? len : 48) : 0;
+        for (i = 0; i < n; i++)
+            _snprintf(hex + 2 * i, 3, "%02x", d[i]);
+        hex[2 * n] = 0;
+        tlog_printf("CR %ld %d %d %s", tlog_ms(), msg ? *(int *)(msg + 0xC) : -1, len, hex);
+    }
+    ((PFN_CollRecv)o_CollRecv)(game, 0, msg);
+}
+
+static void __fastcall hk_CollAdd(void *mgr, void *edx, BYTE *ev)
+{
+    BYTE *s = ev ? *(BYTE **)(ev + 8) : NULL, *d = ev ? *(BYTE **)(ev + 0xC) : NULL;
+    (void)edx;
+    tlog_printf("CA %ld %lu %lu", tlog_ms(), s ? *(DWORD *)(s + 4) : 0, d ? *(DWORD *)(d + 4) : 0);
+    ((PFN_EventAdd)o_CollAdd)(mgr, 0, ev);
+}
+
 /* WeaponsDisplay cleanup: count the empty watchers (the byte patch covers every caller) */
 static void __fastcall hk_RemoveCheck(BYTE *watcher, void *edx, int id)
 {
@@ -245,6 +296,9 @@ void join_install(void)
     BYTE jmp[6];
     LONG rel;
     int logs = g_cfg.testMode || g_cfg.verbose;
+    if (g_cfg.fixRammingDamage)
+        patch_bytes(0x005AFA6C, "6a 00 8b ce e8 fb 67 12 00", "90 90 90 90 90 90 90 90 90",
+                    "collision reports keep the reporting ship as the source (ramming damage)");
     if (g_cfg.fixRestartCrashes) {
         patch_bytes(ADDR_RRC_EMPTY, "74 12", "74 64", "range watcher: no read through an empty list (restart crash)");
         redirect_call(ADDR_CALL_WD_RRC, (void *)hk_RemoveCheck, &o_RemoveCheck, ADDR_RRC,
@@ -258,6 +312,10 @@ void join_install(void)
     if (!logs)
         return;
     redirect_call(ADDR_CALL_BCAST, (void *)hk_Bcast, &o_Bcast, ADDR_BCAST, "log host object broadcasts");
+    if (g_cfg.testMode) {
+        redirect_call(ADDR_CALL_COLL_RECV, (void *)hk_CollRecv, &o_CollRecv, ADDR_COLL_RECV, "test: collision reports received");
+        redirect_call(ADDR_CALL_COLL_ADD, (void *)hk_CollAdd, &o_CollAdd, ADDR_EVENT_ADD, "test: collision reports applied");
+    }
     if (memcmp((void *)ADDR_MP_RECV, prologue, 6) != 0) {
         logf("HOOK dropped-message log: prologue differs, NOT applied");
         return;

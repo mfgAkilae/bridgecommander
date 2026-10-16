@@ -75,6 +75,8 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Dedicated server: the first player's ship | invisible | visible | v1.7.1 (#24) |
 | Freezes with ten players (event handlers doubling) | up to 37 s, 98667 handlers | none, ≈400 | v1.7.2 (#27) |
 | Script error in windowed mode | game waits in a debug console | logged, game continues | v1.2 |
+| Ramming: both ships damaged when players collide | 3 of 10 | 21 of 24 | v1.0–v1.4 |
+| Ramming: an AI ship a client rams takes damage | 0 of 17 | 21 of 21 | main |
 
 ## Installation
 
@@ -156,6 +158,9 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
     which the end of a game deletes the players' ships, clients crash: the weapons display and a
     mission event handler read through empty pointers. Our test pilot did this; through the menus it
     is not known to happen.
+20. **Ramming an AI ship.** Only the host applies collision damage. A client's report for an AI ship
+    it rammed lost its source on the way, and the host dropped it: the client took damage, the AI
+    ship none.
 
 What bcmpfix does about it:
 
@@ -180,6 +185,7 @@ What bcmpfix does about it:
 | 17 | clients advance such copies by the message latency and show their own copy's hit at once; the host's report confirms it (v1.5.0) |
 | 18 | the owner reports its firing banks and which beams are on the target; the other computers fire exactly those banks and show a hit when the owner's beam hits (`PhaserHitAuthority`, v1.6.0); they start a reported bank at once, and the reports also go straight from player to player instead of only through the host (`DirectPhaserReports`, v1.7.0) |
 | 19 | the two reads are skipped when the pointer is empty (`FixRestartCrashes`, v1.7.4) |
+| 20 | the report keeps the ramming ship (`FixRammingDamage`, in `main`) |
 
 ## Verification
 
@@ -276,6 +282,12 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
   through the end screen work. An earlier version of the test pilot created its new ship in the
   frame in which the end of the game deleted the ships, which crashed clients, also with the
   original game; v1.7.4 guards against it (`FixRestartCrashes`, see `docs/measurements.md`).
+- Ramming (tested after v1.7.4): every computer detects collisions itself, and each player's ship
+  is damaged as its own owner saw the contact. With bcmpfix both owners see 21 of 24 contacts (the
+  original game: 3 of 10), and the copies are at most 2.8 units off after the impact (original:
+  up to 14). A graze only one owner sees still damages only that ship. A client that rammed an AI
+  ship damaged only itself (a bug of the original game, `FixRammingDamage` in `main`). The starbase
+  of the starbase mission takes no collision damage by the mission's design.
 - Since v1.7.3 a ship that appears on a screen (a player joins or respawns, an AI ship is created)
   starts at the first position received for it. Before, it started at the position of its "object
   created" message, which can be seconds old, and slid into place for up to a second (#29).

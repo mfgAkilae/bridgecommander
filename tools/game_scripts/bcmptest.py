@@ -5,6 +5,7 @@
 import App
 import time
 import string
+import math
 
 # The environment is read through bcmpdll (registered by the DLL before the
 # first Tick), because this module is imported earlier, at Autoexec time.
@@ -26,6 +27,10 @@ g_iTeam = 0
 g_lRange = []
 g_bSwitch = 0
 g_bTeamSent = 0
+g_fRam = 0.0
+g_dNetPid = {}
+g_bRamNoFire = 0
+g_iRamHitAt = 0
 g_fGameOverAt = 0     # Now() when the pilot saw the game end (end screen), 0 while it runs
 g_fRestartAt = 0      # host: Now() when the end screen offers "Restart"
 g_bRestartSent = 0
@@ -41,7 +46,7 @@ def Env(sKey, sDefault):
 
 def InitEnv():
 	global g_fStart, g_bInit, g_sRole, g_sName, g_sJoin, g_iSpecies, g_iSystem, g_sAI, g_fLogEvery, g_fQuitAfter
-	global g_bDedicated, g_iMaxPlayers, g_iAIShips, g_sTarget, g_iMission, g_iTeam, g_lRange, g_bSwitch
+	global g_bDedicated, g_iMaxPlayers, g_iAIShips, g_sTarget, g_iMission, g_iTeam, g_lRange, g_bSwitch, g_fRam, g_bRamNoFire
 	g_bInit = 1
 	g_fStart = Now()
 	g_sRole = Env('BCMP_ROLE', '')
@@ -63,6 +68,10 @@ def InitEnv():
 	# BCMP_MISSION=5: Defend the Starbase; BCMP_TEAM: 0 = attackers, 1 = defenders. With
 	# BCMP_TARGET=team the pilot attacks only the other team (attackers: the starbase first).
 	g_iMission = string.atoi(Env('BCMP_MISSION', '1'))
+	# BCMP_RAM=<fraction>: that share of the manoeuvres is a ramming run: full impulse straight at
+	# the target's centre until the ships collide (then 1.5 s more) or 12 s pass
+	g_fRam = string.atof(Env('BCMP_RAM', '0'))
+	g_bRamNoFire = Env('BCMP_RAM_NOFIRE', '0') == '1'
 	g_iTeam = string.atoi(Env('BCMP_TEAM', '0'))
 	# BCMP_RANGE=d1,d2,...: range test. The host's ship stands still and fires its phasers at a
 	# stationary target ship (RT) that it moves to each distance in turn (15 s each); the
@@ -390,7 +399,10 @@ def KeepAIShips():
 				pShip.RandomOrientation()
 				pShip.UpdateNodeOnly()
 				pSet.GetProximityManager().UpdateObject(pShip)
-				pShip.SetAI(AI.Compound.BasicAttack.CreateAI(pShip, pTargets))
+				if not g_bRamNoFire:
+					# (the ramming test without weapons keeps the AI ships passive: hull losses come from
+					# collisions only)
+					pShip.SetAI(AI.Compound.BasicAttack.CreateAI(pShip, pTargets))
 				Log('X AISHIP %d %s %s' % (Now(), sName, g_lAIClasses[(i - 1) % len(g_lAIClasses)]))
 		i = i + 1
 	g_dAIGone['started'] = 1
@@ -455,7 +467,7 @@ def FindEnemy(pPlayer):
 	return pBest
 
 def Pilot(pPlayer):
-	global g_iManeuverEnd, g_sManeuver, g_iNextVolley, g_iVolleyEnd, g_iTargetID
+	global g_iManeuverEnd, g_sManeuver, g_iNextVolley, g_iVolleyEnd, g_iTargetID, g_iRamHitAt
 	pEnemy = FindEnemy(pPlayer)
 	t = Now()
 	if pEnemy is None:
@@ -466,9 +478,15 @@ def Pilot(pPlayer):
 		pPlayer.SetAlertLevel(App.ShipClass.RED_ALERT)
 		pPlayer.SetTarget(pEnemy.GetName())
 		Log('X PILOT %d %s targets %s' % (t, pPlayer.GetName(), pEnemy.GetName()))
+	if g_sManeuver == 'ram' and g_iRamHitAt and t - g_iRamHitAt > 1500:
+		g_iManeuverEnd = t  # rammed: back to the normal manoeuvres
 	if t >= g_iManeuverEnd:
 		r = Rand()
-		if r < 0.5:
+		if g_fRam > 0 and Rand() < g_fRam:
+			g_sManeuver = 'ram'
+			g_iManeuverEnd = t + 12000
+			g_iRamHitAt = 0
+		elif r < 0.5:
 			g_sManeuver = 'chase'
 			g_iManeuverEnd = t + 3000 + int(Rand() * 3000)
 		elif r < 0.85:
@@ -480,7 +498,18 @@ def Pilot(pPlayer):
 			g_sManeuver = 'brake'
 			g_iManeuverEnd = t + 1000 + int(Rand() * 1000)
 		Log('X MANEUVER %d %s %s' % (t, pPlayer.GetName(), g_sManeuver))
-	if g_sManeuver == 'chase':
+	if g_sManeuver == 'ram':
+		# aim at the intercept point: the target's position plus its velocity times the time to close in
+		kE = pEnemy.GetWorldLocation()
+		kP = pPlayer.GetWorldLocation()
+		kV = pEnemy.GetVelocityTG()
+		fDist = math.sqrt((kE.GetX() - kP.GetX()) ** 2 + (kE.GetY() - kP.GetY()) ** 2 + (kE.GetZ() - kP.GetZ()) ** 2)
+		kO = pPlayer.GetVelocityTG()
+		fSpeed = math.sqrt(kO.GetX() * kO.GetX() + kO.GetY() * kO.GetY() + kO.GetZ() * kO.GetZ())
+		fT = min(fDist / max(fSpeed, 2.0), 6.0)
+		pPlayer.TurnTowardLocation(MakePoint(kE.GetX() + kV.GetX() * fT, kE.GetY() + kV.GetY() * fT, kE.GetZ() + kV.GetZ() * fT))
+		pPlayer.SetImpulse(1.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
+	elif g_sManeuver == 'chase':
 		kE = pEnemy.GetWorldLocation()
 		kOff = MakePoint(kE.GetX() + 30.0 * (Rand() - 0.5), kE.GetY() + 30.0 * (Rand() - 0.5), kE.GetZ() + 30.0 * (Rand() - 0.5))
 		pPlayer.TurnTowardLocation(kOff)
@@ -489,8 +518,11 @@ def Pilot(pPlayer):
 		pPlayer.SetImpulse(0.8, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
 	else:
 		pPlayer.SetImpulse(0.0, App.TGPoint3_GetModelForward(), App.PhysicsObjectClass.DIRECTION_MODEL_SPACE)
-	# weapons: torpedo + phaser volleys like a player holding the fire buttons
-	if t >= g_iNextVolley:
+	# weapons: torpedo + phaser volleys like a player holding the fire buttons (not in the
+	# ramming test without weapons, BCMP_RAM_NOFIRE=1: hull losses then come from collisions only)
+	if g_bRamNoFire:
+		pass
+	elif t >= g_iNextVolley:
 		g_iNextVolley = t + 1200 + int(Rand() * 1300)
 		g_iVolleyEnd = t + 600
 		for eGroup in (App.ShipClass.WG_PRIMARY, App.ShipClass.WG_SECONDARY):
@@ -595,6 +627,10 @@ def InGame():
 	g_fLastLog = t
 	fGameTime = App.g_kUtopiaModule.GetGameTime()
 	for (iID, pShip) in GetShips():
+		if not g_dNetPid.has_key(pShip.GetObjID()):
+			# once per ship: the network player ID the game gives it here (0 = not a player's ship)
+			g_dNetPid[pShip.GetObjID()] = 1
+			Log('X NETPID %d %s %d %d' % (t, ShipName(pShip), pShip.GetObjID(), Try(lambda s=pShip: s.GetNetPlayerID(), -2)))
 		kPos = pShip.GetWorldLocation()
 		kVel = pShip.GetVelocityTG()
 		fHull = -1.0
@@ -711,6 +747,8 @@ def InstallHandlers():
 	App.g_kEventManager.AddBroadcastPythonFuncHandler(App.ET_WEAPON_HIT, pMission, __name__ + '.OnWeaponHit')
 	App.g_kEventManager.AddBroadcastPythonFuncHandler(App.ET_OBJECT_EXPLODING, pMission, __name__ + '.OnExploding')
 	App.g_kEventManager.AddBroadcastPythonFuncHandler(App.ET_TORPEDO_FIRED, pMission, __name__ + '.OnTorpedoFired')
+	App.g_kEventManager.AddBroadcastPythonFuncHandler(App.ET_OBJECT_COLLISION, pMission, __name__ + '.OnCollision')
+	App.g_kEventManager.AddBroadcastPythonFuncHandler(App.ET_HOST_OBJECT_COLLISION, pMission, __name__ + '.OnHostCollision')
 	g_bHandlers = 1
 	Log('X HANDLERS %d' % Now())
 
@@ -756,6 +794,45 @@ def OnWeaponHit(pObject, pEvent):
 	sAt = Try(lambda e=pEvent: '%.1f,%.1f,%.1f' % (e.GetWorldHitPoint().GetX(), e.GetWorldHitPoint().GetY(), e.GetWorldHitPoint().GetZ()), '?')
 	sSrc = Try(lambda e=pEvent: SourceShipName(e.GetSource()), '?')
 	Log('H %d %s fp=%s dmg=%s wtype=%s hull=%s wid=%s at=%s src=%s' % (t, sTarget, sFp, sDmg, sType, sHull, sWid, sAt, sSrc))
+	pObject.CallNextHandler(pEvent)
+
+def CollisionForce(pEvent):
+	try:
+		return '%.1f' % pEvent.GetCollisionForce()
+	except:
+		pass
+	try:
+		return '%.1f' % App.CollisionEventPtr(pEvent.this).GetCollisionForce()
+	except:
+		return '?'
+
+def CollisionLine(sKind, pEvent):
+	# a collision this instance detected (C) or a client's report the host applies (CH):
+	# both objects, the force and the instance's own player ship
+	global g_iRamHitAt
+	t = Now()
+	sA = Try(lambda e=pEvent: ObjName(e.GetSource()), '?')
+	sB = Try(lambda e=pEvent: ObjName(e.GetDestination()), '?')
+	sOwn = '-'
+	pGame = App.Game_GetCurrentGame()
+	if pGame and pGame.GetPlayer():
+		sOwn = ShipName(pGame.GetPlayer())
+		if sKind == 'C' and sOwn in (sA, sB):
+			g_iRamHitAt = t
+	Log('%s %d %s %s force=%s own=%s' % (sKind, t, sA, sB, CollisionForce(pEvent), sOwn))
+
+def OnCollision(pObject, pEvent):
+	try:
+		CollisionLine('C', pEvent)
+	except:
+		pass
+	pObject.CallNextHandler(pEvent)
+
+def OnHostCollision(pObject, pEvent):
+	try:
+		CollisionLine('CH', pEvent)
+	except:
+		pass
 	pObject.CallNextHandler(pEvent)
 
 def OnExploding(pObject, pEvent):

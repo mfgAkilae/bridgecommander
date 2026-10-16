@@ -33,6 +33,8 @@ def main():
     ap.add_argument('--teams', default='')
     ap.add_argument('--range', default='')
     ap.add_argument('--switch', action='store_true')
+    ap.add_argument('--ram', type=float, default=0.0)
+    ap.add_argument('--ram-nofire', action='store_true')
     ap.add_argument('--nowait', action='store_true')
     ap.add_argument('--nodll', action='store_true')
     ap.add_argument('--set', action='append', default=[])

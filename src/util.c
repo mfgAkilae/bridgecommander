@@ -62,6 +62,7 @@ void config_load(void)
     g_cfg.fixDedicatedIds = ini_int(ini, "Fixes", "FixDedicatedObjectIds", 1);
     g_cfg.fixConditionInRange = ini_int(ini, "Fixes", "FixConditionInRange", 1);
     g_cfg.fixRestartCrashes = ini_int(ini, "Fixes", "FixRestartCrashes", 1);
+    g_cfg.fixRammingDamage = ini_int(ini, "Fixes", "FixRammingDamage", 1);
     g_cfg.snapNewShips = ini_int(ini, "Fixes", "SnapNewShips", 1);
     g_cfg.torpedoLead = ini_int(ini, "Fixes", "TorpedoLatencyCompensation", 1);
     g_cfg.predictHits = ini_int(ini, "Fixes", "PredictTorpedoHits", 1);

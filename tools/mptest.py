@@ -42,7 +42,7 @@ FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0,
              'TrackingArc': 0, 'UpdateDistanceScalePercent': 100, 'StateUpdateIntervalMs': 100, 'ResendIntervalMs': 1000,
              'TorpedoHitAuthority': 0, 'LatencyCompensation': 0, 'MaxLatencyCompensationMs': 0,
              'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'FixGhostShip': 0, 'FixDedicatedObjectIds': 0,
-             'FixConditionInRange': 0, 'FixRestartCrashes': 0, 'SnapNewShips': 0, 'TorpedoLatencyCompensation': 0,
+             'FixConditionInRange': 0, 'FixRestartCrashes': 0, 'FixRammingDamage': 0, 'SnapNewShips': 0, 'TorpedoLatencyCompensation': 0,
              'PredictTorpedoHits': 0, 'PhaserHitAuthority': 0, 'PhaserSync': 0, 'DirectPhaserReports': 0,
              'ScriptLayer': 0, 'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'MaxFPS': 0,
              'InputOnlyWhenFocused': 0}
@@ -147,6 +147,10 @@ def main():
     ap.add_argument('--mission', type=int, default=1, help='1 = deathmatch, 5 = Defend the Starbase')
     ap.add_argument('--range', default='', help='range test: distances d1,d2,... (the host fires at a stationary '
                     'ship it moves to each distance for 15 s; the clients only watch)')
+    ap.add_argument('--ram', type=float, default=0.0, help='ramming test: fraction of the pilots\' manoeuvres that '
+                    'are full-speed runs at the target until the ships collide (0..1)')
+    ap.add_argument('--ram-nofire', action='store_true', help='ramming test without weapons (hull losses come '
+                    'from collisions only)')
     ap.add_argument('--switch', action='store_true', help='target switch test: the host keeps firing while its '
                     'two target ships take turns behind it (the banks switch targets without stopping)')
     ap.add_argument('--teams', default='', help='team per instance in role order (host, client, client2, ...), '
@@ -235,6 +239,8 @@ def main():
             'BCMP_MISSION': str(a.mission),
             'BCMP_RANGE': a.range,
             'BCMP_SWITCH': '1' if a.switch else '0',
+            'BCMP_RAM': str(a.ram),
+            'BCMP_RAM_NOFIRE': '1' if a.ram_nofire else '0',
             'BCMP_TEAM': (a.teams.split(',') + ['0'] * 32)[i] if a.teams else '0',
         })
         for f in ('tlog_%s.txt' % role,):

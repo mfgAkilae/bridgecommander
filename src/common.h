@@ -39,6 +39,7 @@ typedef struct Config {
     int fixDedicatedIds;    /* a dedicated server numbers its objects from slot 15, not the first client's slot 0 */
     int fixConditionInRange; /* script: ConditionInRange registers its group handlers once (issue #27) */
     int fixRestartCrashes;  /* two original-game crashes when a mission restarts (join.c) */
+    int fixRammingDamage;   /* a client's collision report keeps its ship as the source (join.c) */
     int replayAnyShip;      /* test switch: a replayed torpedo may hit any ship, not only the reported one */
     int predictAnyHit;      /* test switch: PredictTorpedoHits also for ships the torpedo was not fired at */
     int phaserOwnerTarget;  /* test switch: remote banks the owner fires aim at the owner's target (issue #30) */

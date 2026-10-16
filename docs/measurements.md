@@ -1347,3 +1347,58 @@ and uninstalling put it back; with the installed script locked by another progra
 stopped with "Nothing was changed", v1.7.3 stayed complete, and the update worked once the file
 was free. No crashes and no script errors of bcmpfix (the starbase mission's own `KeyError` is
 logged on every client).
+
+## Ramming (after v1.7.4, `FixRammingDamage`)
+
+The test pilot rams (`mptest.py --ram 0.8 --ram-nofire`): 80 % of its manoeuvres are runs at full
+impulse at its target's intercept point until the ships collide, and no ship fires, so hull losses
+come from collisions only (AI ships stay passive). `tools/rams.py` groups the collision events every
+instance logs (`C` lines) into contacts between two ships, checks the host's hull values of both
+ships (the host applies all collision damage) and the distance between each ship's owner position
+and its copies in the 3 s after the impact. 60 ms ±20 ms, 1 % loss, 180–300 s per run.
+
+How the original game handles collisions in multiplayer: every computer detects collisions itself.
+A client sends the host the collisions of its own ship (message 0x15 from
+`ShipClass::CollisionEffectHandler`, 0x005AF9C0); of a collision with another player's ship only
+the event in which its own ship is the destination, so each player's ship is damaged according to
+its own owner's view. The host checks that the sender's ship is the event's source or destination
+and that the two objects are less than 26 units apart in its own view (0x006A2470), and applies the
+damage (`ET_HOST_OBJECT_COLLISION`).
+
+Players ramming players (six players, and one duel with bcmpfix):
+
+| | original game (2 runs) | v1.7.4 (3 runs) |
+|---|---|---|
+| contacts | 10 | 24 |
+| seen by both owners / by one owner / by neither | 3 / 5 / 2 | 21 / 3 / 0 |
+| damage to both ships / to one / to none | 3 / 5 / 2 | 21 / 3 / 0 |
+| copies vs owner position in the 3 s after the impact, median per run / max (units) | 8.3–12.8 / 13.9 | 0.3–1.5 / 2.8 |
+
+In the original game the copies are several units off when ships close in, so the owners often see
+different things: one ship takes damage and the other none, or neither does. With bcmpfix both
+owners see almost every contact. A graze only one owner sees still damages only that owner's ship
+(3 of 24; one of 12 more contacts with `FixRammingDamage`, which does not change player-against-
+player collisions). Most rams destroyed a ship.
+
+Players ramming AI ships (four players, five passive AI ships):
+
+| | original game | v1.7.4 | `FixRammingDamage` |
+|---|---|---|---|
+| contacts of a client's ship with an AI ship | 17 | 37 (2 runs) | 21 (2 runs, one with a dedicated server) |
+| the AI ship took damage | 0 | 0 | 21 |
+| the client's ship took damage | 7 | 30 | 21 |
+
+The client's handler also sends the event in which the AI ship is the destination and its own ship
+the source, but first sets the event's source to NULL (0x005AFA6C). The host requires the sender's
+ship as source or destination and dropped every such report: a client that rammed an AI ship only
+damaged itself. The host's own ship was not affected (the host applies its collisions directly).
+Fix (`FixRammingDamage=1`, `src/join.c`): the source stays when it is a ship (a source that is no
+ship is still cleared); the host's checks are unchanged (the destination is no player's ship, the
+two objects are less than 26 units apart). The starbase of the starbase mission takes no collision
+damage at all: the mission turns it off (`DisableCollisionDamage(1)`), also with the fix.
+
+Because the handler cleared the source before the test pilot's own event handler saw the event,
+the pilot logged these collisions without a source on the owner's machine; the counts of who saw a
+contact are therefore only complete with the fix (the damage counts come from the host's hull
+values and are not affected). Test telemetry of the DLL: `CR` lines for every collision report the
+host receives (with the serialized event), `CA` for every report it applies.
