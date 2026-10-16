@@ -153,7 +153,6 @@ col.c-problem { width: 44%; }
         <tr><td>Dedicated server: the first player's ship</td><td class="num before">invisible</td><td class="num after">visible</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/24">v1.7.1 #24</a></td></tr>
         <tr><td>Freezes with ten players (event handlers doubling)</td><td class="num before">up to 37 s, 98667 handlers</td><td class="num after">none, ≈400</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/27">v1.7.2 #27</a></td></tr>
         <tr><td>Script error in windowed mode</td><td class="num before">game waits in a debug console</td><td class="num after">logged, game continues</td><td class="ver">v1.2</td></tr>
-        <tr><td>Starbase mission restarts: clients crash</td><td class="num before">2–4 of 5 in every test run</td><td class="num after">none</td><td class="ver">v1.7.4</td></tr>
       </tbody>
     </table></div>
   </section>
@@ -162,7 +161,6 @@ col.c-problem { width: 44%; }
     <h2>Still open</h2>
     <ul>
       <li>Real internet games behind NAT routers and firewalls are not tested yet (<a href="https://github.com/mfgAkilae/bridgecommander/issues/26">#26</a>).</li>
-      <li>Starbase mission restarts: a ship picked while the restart was still running stayed on the host without an owner (seen with the scripted test pilot only).</li>
     </ul>
     <p>Test bed: up to eleven game instances in one Windows Sandbox, scripted pilots, latency and loss simulated per direction. Includes a 30-minute game with a dedicated server, ten clients and two AI ships without stalls, crashes or memory growth.</p>
   </div>

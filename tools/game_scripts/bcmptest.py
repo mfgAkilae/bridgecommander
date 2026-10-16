@@ -26,6 +26,11 @@ g_iTeam = 0
 g_lRange = []
 g_bSwitch = 0
 g_bTeamSent = 0
+g_fGameOverAt = 0     # Now() when the pilot saw the game end (end screen), 0 while it runs
+g_fRestartAt = 0      # host: Now() when the end screen offers "Restart"
+g_bRestartSent = 0
+RESTART_AFTER_MS = 5000      # host: press "Restart" this long after the end screen showed it
+RESTART_NO_DIALOG_MS = 20000  # host: restart this long after the game ended if no end screen shows
 
 def Env(sKey, sDefault):
 	import bcmpdll
@@ -501,12 +506,67 @@ def Pilot(pPlayer):
 			if pSystem:
 				pSystem.StopFiring()
 
+def GameOver():
+	"""1 while the game is over: from the end of the starbase cutscene or the end message
+	(MissionShared.g_bGameOver) until the mission restarts. The game has deleted the ships; a
+	player only sees the end screen. The host restarts like a player who presses "Restart", and
+	the pilots pick team and ship again after the restart, like a player in the ship select
+	screen. Spawning in the frames in which the game over deletes the ships made clients crash
+	(the stock crashes behind FixRestartCrashes) and left ships without an owner on the host."""
+	global g_fGameOverAt, g_fRestartAt, g_bRestartSent, g_bTeamSent
+	import Multiplayer.MissionShared
+	if Multiplayer.MissionShared.g_bGameOver:
+		t = Now()
+		if not g_fGameOverAt:
+			g_fGameOverAt = t
+			Log('X GAMEOVER %d' % t)
+		if App.g_kUtopiaModule.IsHost() and not g_bRestartSent:
+			if not g_fRestartAt and RestartOffered():
+				g_fRestartAt = t
+			if (g_fRestartAt and t - g_fRestartAt > RESTART_AFTER_MS) or t - g_fGameOverAt > RESTART_NO_DIALOG_MS:
+				g_bRestartSent = 1
+				RequestRestart()
+		return 1
+	if g_fGameOverAt:
+		# the mission restarted (RestartGame cleared the teams): team and ship again in 8 s
+		g_fGameOverAt = 0
+		g_fRestartAt = 0
+		g_bRestartSent = 0
+		g_bTeamSent = 0
+		Log('X RESTARTED %d' % Now())
+		SetState('ingame')
+	return 0
+
+def RestartOffered():
+	# the end screen shows the "Restart" button (host only)
+	import Multiplayer.MissionMenusShared
+	pButton = Multiplayer.MissionMenusShared.g_pEndRestartButton
+	try:
+		return pButton is not None and pButton.IsVisible()
+	except:
+		return 0
+
+def RequestRestart():
+	# what the end screen's "Restart" button sends
+	import Multiplayer.MissionShared
+	import MissionLib
+	pMission = MissionLib.GetMission()
+	if not pMission:
+		return
+	pEvent = App.TGEvent_Create()
+	pEvent.SetEventType(Multiplayer.MissionShared.ET_RESTART_GAME)
+	pEvent.SetDestination(pMission)
+	App.g_kEventManager.AddEvent(pEvent)
+	Log('X RESTART %d' % Now())
+
 def InGame():
 	global g_fLastLog, g_iAIShipID
 	pGame = App.Game_GetCurrentGame()
 	if not pGame:
 		return
 	InstallHandlers()
+	if GameOver():
+		return
 	pPlayer = pGame.GetPlayer()
 	KeepAIShips()
 	if g_bDedicated:
@@ -547,7 +607,7 @@ def InGame():
 		elif iID == -1 and g_sRole == 'host':
 			iLocal = 1  # the host simulates the AI ships
 		kFwd = pShip.GetWorldForwardTG()
-		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d %.3f %.3f %.3f' % (t, fGameTime, pShip.GetName(), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying(), kFwd.GetX(), kFwd.GetY(), kFwd.GetZ()))
+		Log('S %d %.3f %s %d %d %d %.2f %.2f %.2f %.2f %.2f %.2f %.1f %d %.3f %.3f %.3f' % (t, fGameTime, ShipName(pShip), iID, pShip.GetObjID(), iLocal, kPos.GetX(), kPos.GetY(), kPos.GetZ(), kVel.GetX(), kVel.GetY(), kVel.GetZ(), fHull, pShip.IsDying(), kFwd.GetX(), kFwd.GetY(), kFwd.GetZ()))
 	LogTorpedoes(t, pPlayer)
 
 def LogTorpedoes(t, pPlayer):
@@ -575,7 +635,7 @@ def LogTorpedoes(t, pPlayer):
 			sShooter = '?'
 			pShooter = App.ShipClass_GetObjectByID(None, pTorp.GetParentID())
 			if pShooter:
-				sShooter = pShooter.GetName()
+				sShooter = ShipName(pShooter)
 			Log('Q %d %d %s %.2f %.2f %.2f' % (t, pTorp.GetObjID(), sShooter, kP.GetX(), kP.GetY(), kP.GetZ()))
 		pObj = pSet.GetNextObject(pObj.GetObjID())
 		if App.IsNull(pObj) or pObj.GetObjID() == iFirst:
@@ -601,7 +661,7 @@ def LogBanks(t):
 				k = (pShip.GetObjID(), i)
 				if g_dBankState.get(k, 0) != iOn:
 					g_dBankState[k] = iOn
-					Log('B %d %s %d %d %d %s' % (t, pShip.GetName(), i, iOn, pBank.GetTargetID(), string.replace(pBank.GetName(), ' ', '_')))
+					Log('B %d %s %d %d %d %s' % (t, ShipName(pShip), i, iOn, pBank.GetTargetID(), string.replace(pBank.GetName(), ' ', '_')))
 			i = i + 1
 
 g_iNextSubLog = 0
@@ -638,7 +698,7 @@ def LogSubsystems(t):
 		for pSub in (pShip.GetImpulseEngineSubsystem(), pShip.GetPhaserSystem(), pShip.GetTorpedoSystem(),
 				pShip.GetPulseWeaponSystem(), pShip.GetPowerSubsystem(), pShip.GetSensorSubsystem()):
 			lVals.append('%.3f' % Cond(pSub))
-		Log('P %d %s %s' % (t, pShip.GetName(), string.join(lVals, ' ')))
+		Log('P %d %s %s' % (t, ShipName(pShip), string.join(lVals, ' ')))
 
 def InstallHandlers():
 	global g_bHandlers
@@ -654,11 +714,15 @@ def InstallHandlers():
 	g_bHandlers = 1
 	Log('X HANDLERS %d' % Now())
 
+def ShipName(pShip):
+	# one field in the telemetry lines
+	return string.replace(pShip.GetName(), ' ', '_')
+
 def ObjName(pObj):
 	if not pObj:
 		return '-'
 	try:
-		return App.ObjectClass_Cast(pObj).GetName()
+		return ShipName(App.ObjectClass_Cast(pObj))
 	except:
 		return '?'
 
@@ -674,11 +738,11 @@ def SourceShipName(pSource):
 	if pTorp:
 		pShip = App.ShipClass_GetObjectByID(None, pTorp.GetParentID())
 		if pShip:
-			return pShip.GetName()
+			return ShipName(pShip)
 		return '?'
 	pSub = App.ShipSubsystem_Cast(pSource)
 	if pSub and pSub.GetParentShip():
-		return pSub.GetParentShip().GetName()
+		return ShipName(pSub.GetParentShip())
 	return ObjName(pSource)
 
 def OnWeaponHit(pObject, pEvent):
@@ -728,7 +792,7 @@ def DamageEnginesOnce(pPlayer):
 			if (pPlayer is None or pShip.GetObjID() != pPlayer.GetObjID()) and pShip.GetHull():
 				pHull = pShip.GetHull()
 				pHull.SetCondition(pHull.GetMaxCondition() * fFrac)
-				Log('X DAMAGE %d hull %s %.2f' % (Now(), pShip.GetName(), fFrac))
+				Log('X DAMAGE %d hull %s %.2f' % (Now(), ShipName(pShip), fFrac))
 		return
 	if pPlayer is None:
 		return

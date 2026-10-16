@@ -75,7 +75,6 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Dedicated server: the first player's ship | invisible | visible | v1.7.1 (#24) |
 | Freezes with ten players (event handlers doubling) | up to 37 s, 98667 handlers | none, ≈400 | v1.7.2 (#27) |
 | Script error in windowed mode | game waits in a debug console | logged, game continues | v1.2 |
-| Starbase mission restarts: clients crash | 2–4 of 5 in every test run | none | v1.7.4 |
 
 ## Installation
 
@@ -153,9 +152,10 @@ Details with addresses: [`docs/findings.md`](docs/findings.md).
 18. **Phaser banks and hits decided per computer.** Only the start and stop of firing are sent;
     every computer decides per bank whether it can fire, and when its beam reaches the target. Banks
     fire on one screen and not on another, and a hit the shooter sees can do no damage on the host.
-19. **Crashes at a mission restart.** When a mission starts over (the starbase mission after the
-    starbase was destroyed), clients can crash on the frame they get their new ship: the weapons
-    display and a mission event handler read through empty pointers.
+19. **Crash when a ship is created as a game ends.** If a new ship is created in the frame in
+    which the end of a game deletes the players' ships, clients crash: the weapons display and a
+    mission event handler read through empty pointers. Our test pilot did this; through the menus it
+    is not known to happen.
 
 What bcmpfix does about it:
 
@@ -272,12 +272,10 @@ Tracked as [issues](https://github.com/mfgAkilae/bridgecommander/issues):
 - The starbase mission (Mission 5) was tested with six players: positions and phasers (also the
   starbase's) are in sync. Torpedoes that passed close to the starbase hit it on some computers
   only; since v1.7.4 a client predicts a hit only on the ship the torpedo was fired at, and a replay
-  hits only the ship the host reported (hits seen by all clients 87.4 % → 96.8 %, #31). When the
-  mission restarted after the starbase was destroyed, two to four of five clients crashed in every
-  test run, also with the original game; fixed in v1.7.4. The test pilot picks its new ship by
-  script and sometimes did so while the restart was still running: that ship then stayed on the
-  host without an owner, and the player's next ship was missing on the other computers. Whether
-  players who pick their ship in the menu can run into this was not tested.
+  hits only the ship the host reported (hits seen by all clients 87.4 % → 96.8 %, #31). Restarts
+  through the end screen work. An earlier version of the test pilot created its new ship in the
+  frame in which the end of the game deleted the ships, which crashed clients, also with the
+  original game; v1.7.4 guards against it (`FixRestartCrashes`, see `docs/measurements.md`).
 - Since v1.7.3 a ship that appears on a screen (a player joins or respawns, an AI ship is created)
   starts at the first position received for it. Before, it started at the position of its "object
   created" message, which can be seconds old, and slid into place for up to a second (#29).

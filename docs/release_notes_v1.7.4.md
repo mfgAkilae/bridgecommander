@@ -1,7 +1,7 @@
 ## Bridge Commander multiplayer fix v1.7.4
 
-Torpedoes near the starbase, phaser banks that kept an old target, respawned ships, crashes when the
-starbase mission restarts, and the findings of two code reviews.
+Torpedoes near the starbase, phaser banks that kept an old target, respawned ships, a crash guard,
+and the findings of two code reviews.
 
 ### How to install or update (Windows)
 
@@ -32,10 +32,12 @@ Manual alternative: unpack **`bcmpfix-1.7.4.zip`** into the game folder.
 - **Respawned ships driven off.** A respawned ship could take over the measured movement and turn
   of a ship that had died before (the game reused its memory) and was driven along it for a moment,
   in tests up to 95 units off. Now every new ship starts without history.
-- **Crashes when the starbase mission restarts (`FixRestartCrashes`).** When the mission started
-  over after the starbase was destroyed, two to four of five clients crashed in every test run,
-  also with the original game. The weapons display and a mission event handler read through
-  pointers that were already empty. These reads are now skipped.
+- **Crash guard (`FixRestartCrashes`).** In the tests clients crashed when the test pilot created
+  its new ship in the frame in which the end of a starbase game deleted the ships, also with the
+  original game: the weapons display and a mission event handler read through pointers that were
+  already empty. These reads are now skipped. A player who picks a ship in the menu is not known to
+  reach that frame; restarts through the end screen ran without crashes, also without bcmpfix.
+  (Corrected after the release: the first version of these notes called it a crash at every restart.)
 - **Code reviews.** Two independent reviews of the less tested parts found, among others: the
   direct phaser channel took a "hello" from any address and kept its peers into the next game, a
   host with `TorpedoHitAuthority=0` still made its clients wait for hit reports, the script's
@@ -58,19 +60,16 @@ game units, backward steps):
 | starbase mission, 6 players | 0.02 / 0.09, 0.0 % (with the starbase) | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.1 % | 193 of 193 |
 
 Phaser beams shown by the other players 99.6–100 %; in the AI run all 2724 of the AI ships' beams
-(v1.7.3: 96.0 %). Mixed game with a v1.7.4 host, v1.7.3, v1.7.2 and v1.7.4 clients: phaser beams
-and torpedo hits 97.7–100 % among them. Starbase mission with three restarts: no crash. Kick test:
-peak error median 3.5, max 5.6; join test: every client saw every ship. Installer update from
-v1.7.3, fresh install over another mod's `dinput.dll` with uninstall, and an update with a locked
-file ("Nothing was changed", v1.7.3 kept) tested. No crashes, no script errors.
+(v1.7.3: 96.0 %). Mixed game with a v1.7.4 host, v1.7.3, v1.7.2 and v1.7.4 clients: phaser beams and
+torpedo hits 97.7–100 % among them. Starbase mission with forced damage: no crash; three restarts
+per run through the end screen (corrected test pilot): no crash. Kick test: peak error median 3.5,
+max 5.6; join test: every client saw every ship. Installer update from v1.7.3, fresh install over
+another mod's `dinput.dll` with uninstall, and an update with a locked file ("Nothing was changed",
+v1.7.3 kept) tested. No crashes, no script errors.
 
 ### Known open points
 
 - Tested in one PC with simulated network conditions, up to eleven players; no real internet games
   yet (#26). The direct phaser reports ran on loopback addresses only.
-- Starbase mission restarts were tested with the scripted test pilot, which picks its new ship by
-  script. When it did so while the restart was still running, that ship stayed on the host without
-  an owner and the player's next ship was missing on the other computers. Players pick their ship
-  in the menu; whether they can run into this was not tested.
 
 Details, evidence and tools: see the README and `docs/measurements.md` in the repository.

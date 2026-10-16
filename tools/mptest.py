@@ -3,6 +3,11 @@
 Usage: python -I mptest.py <name> [--seconds N] [--fixes on|off] [--latency MS] [--jitter MS]
                            [--loss PERMILLE] [--rate HZ]
 Writes logs to E:/dev/bc/work/runs/<name>/.
+
+--fixes off (and --variant ROLE=off) sets every [Fixes] key to its stock value, including
+NoScriptErrorConsole=0: a windowed stock game freezes in the blocking Python debug console on any
+script error, and the starbase mission (--mission 5) raises one on every client. Add
+--set NoScriptErrorConsole=1 to log script errors and continue instead.
 """
 import argparse
 import ctypes
@@ -25,11 +30,24 @@ HOST_ADDR = '127.0.0.2'
 NAMES = ['Alpha', 'Bravo', 'Charlie', 'Delta', 'Echo', 'Foxtrot', 'Golf', 'Hotel', 'India', 'Juliett', 'Kilo', 'Lima',
          'Mike', 'November', 'Oscar', 'Papa']
 
+# --fixes off: every [Fixes] key of the DLL (bcmpfix/src/util.c) at its stock value. A key missing
+# here falls back to the DLL default, which is the fix turned on, so a new key must be added here.
+# Stock numbers: CorrectionGainPercent=100, UpdateDistanceScalePercent=100, StateUpdateIntervalMs=100,
+# ResendIntervalMs=1000; TrackingLeadOffsetMs and MaxLatencyCompensationMs only matter with their
+# fixes on. NoScriptErrorConsole=0 is the stock blocking console (see the usage text).
 FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0, 'FixProxyFirstFrame': 0,
-             'NoCorrectionDeadband': 0, 'CorrectionGainPercent': 100, 'StateUpdateIntervalMs': 100,
-             'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'ResendIntervalMs': 1000, 'ScriptLayer': 0, 'TorpedoHitAuthority': 0,
-             'LatencyCompensation': 0, 'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'SmoothCorrection': 0, 'OrientationCorrection': 0, 'FixTorpedoFireFlags': 0,
-             'FixRestartCrashes': 0, 'MaxFPS': 0}
+             'NoCorrectionDeadband': 0, 'FixTorpedoFireFlags': 0, 'SymmetricTorpedoSpawn': 0,
+             'CorrectionGainPercent': 100, 'SmoothCorrection': 0, 'OrientationCorrection': 0, 'ArcExtrapolation': 0,
+             'VelocityExtrapolation': 0, 'KnockbackCorrection': 0, 'VelocityTracking': 0, 'TrackingLeadOffsetMs': 0,
+             'TrackingArc': 0, 'UpdateDistanceScalePercent': 100, 'StateUpdateIntervalMs': 100, 'ResendIntervalMs': 1000,
+             'TorpedoHitAuthority': 0, 'LatencyCompensation': 0, 'MaxLatencyCompensationMs': 0,
+             'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'FixGhostShip': 0, 'FixDedicatedObjectIds': 0,
+             'FixConditionInRange': 0, 'FixRestartCrashes': 0, 'SnapNewShips': 0, 'TorpedoLatencyCompensation': 0,
+             'PredictTorpedoHits': 0, 'PhaserHitAuthority': 0, 'PhaserSync': 0, 'DirectPhaserReports': 0,
+             'ScriptLayer': 0, 'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'MaxFPS': 0,
+             'InputOnlyWhenFocused': 0}
+# --fixes on: a key missing here keeps its DLL default, which is the release setting
+# (release/bcmpfix.ini), so FIXES_ON does not need every key
 FIXES_ON = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 1, 'FixDeltaBase': 1, 'FixProxyFirstFrame': 1,
             'NoCorrectionDeadband': 1, 'CorrectionGainPercent': 500, 'StateUpdateIntervalMs': 50,
             'TimerResolution1ms': 1, 'ClockFromProcessStart': 1, 'ResendIntervalMs': 300, 'ScriptLayer': 1, 'TorpedoHitAuthority': 1,

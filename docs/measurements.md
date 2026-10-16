@@ -1217,21 +1217,30 @@ players, starbase mission and deathmatch, 240–300 s, 60 ms ±20 ms, 1 % loss):
 | largest distance | 95.2 units | 4.7 units (a ship a client saw at game start; 0.4 after 0.5 s) |
 | 90th percentile per run | 0.2–0.3 units | 0.2–0.3 units |
 
-Runs in which clients crashed at a mission restart are left out (see the next section); in one of
+Runs in which clients crashed at the end of a game are left out (see the next section); in one of
 them a ship that appeared while ships were falling behind was 6.6 units off.
 
-## Crashes when a mission restarts (v1.7.4, `FixRestartCrashes`)
+## Crashes when a ship is created as a game ends (v1.7.4, `FixRestartCrashes`)
 
-When the starbase is destroyed, the starbase mission ends and starts over: every player picks a ship
-again. In test runs with forced damage (all hulls at 1 % every 15–20 s, so the starbase and the
-players die often) two to four of the five clients crashed at a restart, in every run: 21 crashed
-clients in 8 runs with the v1.7.4 development code, two in a run with v1.7.3 on every machine, and
-the same with bcmpfix's fixes switched off. Only the game's script error console was kept off in that
-run, because the starbase mission raises a script error on every client (`KeyError` in
-`ObjectCreatedHandler`), which freezes the stock game in windowed mode before any restart. A run
-with every other fix switched off too had four of five clients crash at the same two places.
+When the starbase is destroyed, the starbase mission is over: after the starbase's cutscene the
+host's end message reaches every computer, which deletes the players' ships and shows the end
+screen. The host can then press "Restart", and every player picks a ship again. In the test runs
+with forced damage (all hulls at 1 % every 15–20 s) two to four of the five clients crashed when
+the game ended, in every run: 21 crashed clients in 8 runs with the v1.7.4 development code, two
+in a run with v1.7.3, and four in a run with every fix switched off. Only the game's script error
+console was kept off in that run: the starbase mission raises a script error on every client
+(`KeyError` in `ObjectCreatedHandler`), which freezes the stock game in windowed mode.
 
-Both crashes are in the original game, on the frame a client gets its new ship:
+The crashes came from the test pilot. It did not wait for the end screen and a restart; it created
+a new ship as soon as its old one was gone, which at the end of a game was the frame in which the
+game deleted the ships. Nobody pressed "Restart" in those runs: the pilots went on playing behind
+the end screen (the host's new ship also created a new starbase). With the corrected pilot (no
+flying and no new ship while the game is over, the host presses "Restart" 5 s after the end screen
+offers it, every pilot sends its team again and picks its ship 8 s after the restart) three runs
+with three restarts each had no crash, also without `FixRestartCrashes` and with every fix switched
+off.
+
+Both crash sites are in the original game, on the frame a client gets its new ship:
 
 - `Game::HandleSetPlayer` (0x00406AE0) calls `WeaponsDisplay::SetShipID` (0x0054B950), which removes
   the charge range checks it had put on the previous ship's weapons (0x0054B6E0). When such a
@@ -1240,26 +1249,21 @@ Both crashes are in the original game, on the frame a client gets its new ship:
 - `Mission::PlayerEnteredSet` (0x004090D0) reads the name of the object's set without checking
   that the object is still in a set: access violation at 0x004090EB (address 0x74).
 
-Fix (`src/join.c`): `RemoveRangeCheck` returns when the list is empty (there is nothing to remove),
-and `PlayerEnteredSet` passes the event on for an object in no set, as it does for an object that is
-not an `ObjectClass`. Two runs with the fix (300 s, six players, three restarts each): no crash; the
-empty watcher occurred 10 times per run, the object in no set once.
+Fix (`src/join.c`), kept as a guard: `RemoveRangeCheck` returns when the list is empty (there is
+nothing to remove), and `PlayerEnteredSet` passes the event on for an object in no set, as it does
+for an object that is not an `ObjectClass`. With the old pilot: two runs, no crash; the empty
+watcher occurred 10 times per run, the object in no set once. A player who picks a ship in the menu
+is not known to reach that frame.
 
-In two of the runs before the fix the ships of some remaining players also fell behind on every
-other screen while the crashed clients were still in the game, growing to 10–27 units within about
-50 s (the host's upload rose to 550 packets per second at the same time). It did not happen in the
-runs with the fix.
-
-The test pilot picks a new ship 8 s after its ship is gone. At a restart this can fall into the
-restart itself: the client creates the ship, the restart deletes it there, but the host keeps it
-and sends it back. That ship then exists on every computer without an owner, and the player's next
-ship is not seen by the others. In the runs with the fix this happened to one or two players per
-run: their phaser hits were missing on the host (up to 32 % of the clients' beams in a run), and
-in one run the host kept such a ship as "Delta - D1" while the player's new ship was 0.5–0.7 units
-behind on the clients. Players pick their ship in the menu after the restart; whether they can hit
-the same moment was not tested. Since then the host takes a client's phaser report, and sets the
-latency compensation, for every ship with that player's ID, not only for the ship the game names
-as the player's.
+The runs with the old pilot showed more effects of ships created behind the end screen, all gone
+with the corrected pilot. While crashed clients were still in the game, the ships of some
+remaining players fell behind on every other screen, by up to 27 units. A ship created in the frame
+of the deletion stayed on the host without an owner, the player's next ship was missing on the
+other computers, and that player's phaser hits were missing on the host (up to 32 % of the
+clients' beams in a run). The host now takes a client's phaser report, and sets the latency
+compensation, for every ship with that player's ID, not only for the ship the game names as the
+player's. With the corrected pilot: client beams shown by the host 99.6 % and 100 %, torpedo hits
+seen by all clients 113 of 114 and 117 of 117, no ship without an owner.
 
 ## Code review of the less tested parts (v1.7.4)
 
@@ -1318,7 +1322,7 @@ client in its place in the v1.7.3 check). The original client froze 5 s after it
 game's script error console (the bug `NoScriptErrorConsole` fixes); in a run with the script before
 its last change it played and showed 87 of 95 torpedo hits. Kick test: peak error median 3.5, 90th
 percentile 4.4, max 5.6 (v1.7.3: 3.4, 4.3, 5.4). Join test: every client saw every ship. Starbase
-mission with forced damage (300 s, three restarts): no crash. Installer: update from v1.7.3 kept the
+mission with forced damage (300 s, the test pilot still playing behind the end screen): no crash. Installer: update from v1.7.3 kept the
 settings and installed the new files; a fresh install over another mod's `dinput.dll` saved it,
 and uninstalling put it back; with the installed script locked by another program the update
 stopped with "Nothing was changed", v1.7.3 stayed complete, and the update worked once the file
