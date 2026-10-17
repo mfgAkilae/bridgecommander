@@ -77,6 +77,7 @@ def Tick():
 def DoTick():
 	global g_iNextPing, g_iNextLead, g_iNextStats
 	PatchConditionInRange()
+	PatchModules()
 	if not App.g_kUtopiaModule.IsMultiplayer():
 		if g_iDirectHost != -1:
 			ResetDirect()
@@ -144,7 +145,7 @@ def GuardInfoPane():
 			continue
 		pMod.RebuildInfoPane = MakeInfoPaneGuard(pMod.RebuildInfoPane)
 		g_dGuarded[sName] = 1
-		g_lGuardLog.append(sName)
+		g_lGuardLog.append('guarded %s.RebuildInfoPane' % sName)
 
 # The menus module is often imported by the failing handler itself, so the DLL calls
 # GuardInfoPane right after every import of a "...Menus" module (hook in the game's
@@ -155,8 +156,43 @@ g_lGuardLog = []            # names guarded, logged by the next tick
 
 def LogGuards():
 	while g_lGuardLog:
-		DllLog('bcmpfix_mp: guarded %s.RebuildInfoPane' % g_lGuardLog[0])
+		DllLog('bcmpfix_mp: %s' % g_lGuardLog[0])
 		del g_lGuardLog[0]
+
+def OnImport():
+	# called by the DLL right after the game imported one of its mission or multiplayer
+	# modules (src/scripterr.c), before the module registers its handlers
+	GuardInfoPane()
+	PatchModules()
+
+# ---- fixes of the game's multiplayer scripts (v2.0) --------------------------------
+# Each fix replaces functions of one game module. The game resolves the handlers it
+# registers by name ('Module.Function') when it dispatches an event, and the scripts call
+# each other through module globals, so replacing the module attribute is enough. A
+# module gets a marker per fix; a module loaded again (next game) is patched again.
+g_lModulePatches = []       # (module name, INI key, patch function)
+
+def AddPatch(sModule, sKey, pFunc):
+	g_lModulePatches.append((sModule, sKey, pFunc))
+
+def PatchModules():
+	for (sName, sKey, pFunc) in g_lModulePatches:
+		if not sys.modules.has_key(sName):
+			continue
+		pMod = sys.modules[sName]
+		if pMod is None:
+			continue
+		sMark = 'bcmp_' + pFunc.__name__
+		if pMod.__dict__.has_key(sMark):
+			continue
+		pMod.__dict__[sMark] = 1
+		if Cfg(sKey) <= 0:
+			continue
+		try:
+			pFunc(pMod)
+			g_lGuardLog.append('%s: %s' % (sName, pFunc.__name__))
+		except:
+			LogError('patch %s %s' % (sName, pFunc.__name__), sys.exc_type, sys.exc_value)
 
 def MakeInfoPaneGuard(pOrig):
 	# Python 1.5 has no closures: pass the original through a default argument

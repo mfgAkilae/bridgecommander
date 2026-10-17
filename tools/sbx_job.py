@@ -6,10 +6,35 @@ Results appear in <sbx>\\runs\\<name>; the sbx folder is env BCMP_SBX (default E
 import argparse
 import json
 import os
+import shutil
 import sys
 import time
 
 SBX = os.environ.get('BCMP_SBX', r'E:\dev\bc\work\sbx')
+
+def sync_runtime_tools():
+    """Refresh the read-only folder mapped into the already-running sandbox."""
+    repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    runtime = os.path.join(os.path.dirname(SBX), 'tools')
+    copies = [
+        (os.path.join(repo, 'tools', 'sbx_agent.py'), os.path.join(runtime, 'sbx_agent.py')),
+        (os.path.join(repo, 'tools', 'sbx_runner.py'), os.path.join(runtime, 'sbx_runner.py')),
+        (os.path.join(repo, 'tools', 'mptest.py'), os.path.join(runtime, 'mptest.py')),
+        (os.path.join(repo, 'tools', 'wincap.py'), os.path.join(runtime, 'wincap.py')),
+        (os.path.join(repo, 'tools', 'game_scripts', 'Local.py'),
+         os.path.join(runtime, 'game_scripts', 'Local.py')),
+        (os.path.join(repo, 'tools', 'game_scripts', 'bcmptest.py'),
+         os.path.join(runtime, 'game_scripts', 'bcmptest.py')),
+        (os.path.join(repo, 'out', 'dinput.dll'),
+         os.path.join(runtime, 'current', 'dinput.dll')),
+        (os.path.join(repo, 'scripts', 'bcmpfix_mp.py'),
+         os.path.join(runtime, 'current', 'bcmpfix_mp.py')),
+    ]
+    for src, dst in copies:
+        if not os.path.isfile(src):
+            raise SystemExit('required sandbox input missing: %s' % src)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.copy2(src, dst)
 
 
 def main():
@@ -43,6 +68,7 @@ def main():
     ap.add_argument('--test-set', action='append', default=[])
     ap.add_argument('--raise-once', action='store_true')
     ap.add_argument('--test-infopane', action='store_true')
+    ap.add_argument('--attack', action='store_true')
     ap.add_argument('--damage', default='')
     ap.add_argument('--kick', default='')
     ap.add_argument('--shots', default='', help='comma separated seconds for screenshots')
@@ -54,6 +80,7 @@ def main():
         return time.time() - os.path.getmtime(p) if os.path.exists(p) else 1e9
     if age('agent_alive.txt') > 30 and age('agent_status.txt') > 600:
         sys.exit('sandbox agent not running (start bc-test.wsb)')
+    sync_runtime_tools()
     job = {k: v for k, v in vars(a).items() if k not in ('nowait', 'shots', 'steps')}
     job['shots'] = [int(x) for x in a.shots.split(',') if x]
     if a.steps:

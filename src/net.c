@@ -11,12 +11,16 @@
 typedef int(WINAPI *PFN_bind)(SOCKET, const struct sockaddr *, int);
 typedef int(WINAPI *PFN_sendto)(SOCKET, const char *, int, int, const struct sockaddr *, int);
 typedef int(WINAPI *PFN_recvfrom)(SOCKET, char *, int, int, struct sockaddr *, int *);
+typedef int(WINAPI *PFN_closesocket)(SOCKET);
 
 static PFN_bind o_bind;
 static PFN_sendto o_sendto;
 static PFN_recvfrom o_recvfrom;
+static PFN_closesocket o_closesocket;
 static CRITICAL_SECTION g_netLock;
 static ULONG g_bindAddr; /* network order, 0 = no override */
+static SOCKET g_gameSock = INVALID_SOCKET; /* the game's transport socket */
+static int g_ownSend;
 
 /* ---- emulator queue ------------------------------------------------------ */
 typedef struct Pkt {
@@ -85,6 +89,9 @@ static void ensure_bound(SOCKET s)
 static int WINAPI hk_bind(SOCKET s, const struct sockaddr *addr, int len)
 {
     struct sockaddr_in a;
+    if (addr && len >= (int)sizeof(a) && addr->sa_family == AF_INET &&
+        ((const struct sockaddr_in *)addr)->sin_port == htons(22101))
+        g_gameSock = s;
     if (g_bindAddr && addr && len >= (int)sizeof(a) && addr->sa_family == AF_INET) {
         memcpy(&a, addr, sizeof(a));
         if (a.sin_addr.s_addr == INADDR_ANY) {
@@ -119,9 +126,16 @@ static void note_peer(const char *dir, SOCKET s, const struct sockaddr *a, int l
     }
 }
 
+SOCKET net_game_socket(void)
+{
+    return g_gameSock;
+}
+
 static int WINAPI hk_sendto(SOCKET s, const char *buf, int len, int flags, const struct sockaddr *to, int tolen)
 {
     ensure_bound(s);
+    if (!g_ownSend && guard_note_send(s, buf, len, to, tolen))
+        g_gameSock = s;
     direct_note_game_send(s, to);
     if (g_cfg.verbose)
         note_peer("send", s, to, len, 0);
@@ -163,20 +177,32 @@ static int WINAPI hk_sendto(SOCKET s, const char *buf, int len, int flags, const
 /* direct.c: our own packets go through the emulator and the statistics like the game's */
 int net_sendto(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen)
 {
-    return hk_sendto(s, buf, len, 0, to, tolen);
+    int r;
+    g_ownSend = 1;
+    r = hk_sendto(s, buf, len, 0, to, tolen);
+    g_ownSend = 0;
+    return r;
 }
 
 static int WINAPI hk_recvfrom(SOCKET s, char *buf, int len, int flags, struct sockaddr *from, int *fromlen)
 {
-    int r;
+    int r, drop;
     pump();
     for (;;) {
         u_long avail = 0;
         int fl = fromlen ? *fromlen : 0;
         r = o_recvfrom(s, buf, len, flags, from, fromlen);
-        if (r <= 0 || !direct_filter(s, buf, r, from))
+        if (r < 0)
             break;
-        /* our packet: hand the game the next one, or "nothing yet" */
+        drop = r > 0 && direct_filter(s, buf, r, from);
+        if (!drop && g_cfg.guardNetwork && r == 0)
+            drop = !guard_datagram(s, buf, r, from, fromlen ? *fromlen : 0);
+        if (!drop && r > 0)
+            guard_note_receive(s, buf, r, from, fromlen ? *fromlen : 0);
+        if (!drop)
+            break;
+        /* A private or rejected datagram is consumed. Hand the game the next
+         * queued datagram, or report that no data is ready yet. */
         g_stats.inPkts++;
         g_stats.inBytes += r;
         if (fromlen)
@@ -199,6 +225,14 @@ static int WINAPI hk_recvfrom(SOCKET s, char *buf, int len, int flags, struct so
         WSASetLastError(e);
     }
     return r;
+}
+
+static int WINAPI hk_closesocket(SOCKET s)
+{
+    guard_forget_socket(s);
+    if (g_gameSock == s)
+        g_gameSock = INVALID_SOCKET;
+    return o_closesocket(s);
 }
 
 typedef struct hostent *(WINAPI *PFN_gethostbyname)(const char *);
@@ -244,8 +278,9 @@ void net_install(void)
     if (g_cfg.testMode && g_cfg.bindAddress[0])
         g_bindAddr = inet_addr(g_cfg.bindAddress);
     direct_init();
-    if (!(g_cfg.testMode || g_cfg.statsIntervalSec > 0 || direct_enabled()))
+    if (!(g_cfg.testMode || g_cfg.statsIntervalSec > 0 || direct_enabled() || g_cfg.guardNetwork))
         return;
+    iat_hook(exe, "WSOCK32.dll", NULL, 3, (void *)hk_closesocket, (void **)&o_closesocket);
     iat_hook(exe, "WSOCK32.dll", NULL, ORD_BIND, (void *)hk_bind, (void **)&o_bind);
     iat_hook(exe, "WSOCK32.dll", NULL, ORD_SENDTO, (void *)hk_sendto, (void **)&o_sendto);
     iat_hook(exe, "WSOCK32.dll", NULL, ORD_RECVFROM, (void *)hk_recvfrom, (void **)&o_recvfrom);

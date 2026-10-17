@@ -81,11 +81,14 @@ unsigned long scripterr_count(void)
     return g_errors;
 }
 
-/* Join race in the mission menus (RebuildInfoPane before the info pane exists):
- * bcmpfix_mp.GuardInfoPane() wraps RebuildInfoPane. The failing handler often
- * imports the menus module itself right before the call, so the guard must run at
- * import time. Hooked: the game's __import__ (0x00753410) calling
- * PyImport_ImportModuleEx (0x0075BC40). */
+/* Script fixes at import time: bcmpfix_mp.OnImport() wraps RebuildInfoPane (join race in
+ * the mission menus) and replaces the functions of the game's multiplayer scripts that
+ * v2.0 fixes. The failing handler often imports the menus module itself right before the
+ * call, and a mission registers its handlers right after its import, so the patches must
+ * be in place at import time. Hooked: the game's __import__ (0x00753410) calling
+ * PyImport_ImportModuleEx (0x0075BC40). Functions import modules on every call (Python
+ * 1.5), so the script runs only when a watched name returns a module object not seen
+ * before (a new game can load a mission module again). */
 #define ADDR_CALL_IMPORTEX 0x007534AE
 #define ADDR_IMPORTEX 0x0075BC40
 #define ADDR_PYRUN 0x0074AE80
@@ -98,13 +101,44 @@ static int g_inImportHook;
 
 int g_pythonUp; /* the game's __import__ ran: Python is initialised */
 
+static int watched_module(const char *name)
+{
+    return strstr(name, "Mission") || strstr(name, "Multiplayer") || strstr(name, "SpeciesTo") ||
+           strstr(name, "Effects") || strstr(name, "Modifier");
+}
+
+/* the module object last seen per watched name */
+static struct {
+    char name[64];
+    int *mod;
+} g_seen[96];
+static int g_nseen;
+
+static int new_module(const char *name, int *m)
+{
+    int i;
+    for (i = 0; i < g_nseen; i++)
+        if (strcmp(g_seen[i].name, name) == 0) {
+            if (g_seen[i].mod == m)
+                return 0;
+            g_seen[i].mod = m;
+            return 1;
+        }
+    if (g_nseen < (int)(sizeof(g_seen) / sizeof(g_seen[0])) && strlen(name) < sizeof(g_seen[0].name)) {
+        lstrcpynA(g_seen[g_nseen].name, name, sizeof(g_seen[0].name));
+        g_seen[g_nseen].mod = m;
+        g_nseen++;
+    }
+    return 1;
+}
+
 static int *__cdecl hk_ImportEx(const char *name, int *globals, int *locals, int *fromlist)
 {
     int *m = ((PFN_ImportEx)o_ImportEx)(name, globals, locals, fromlist);
     g_pythonUp = 1;
-    if (m && !g_inImportHook && name && strstr(name, "Menus")) {
+    if (m && !g_inImportHook && name && watched_module(name) && new_module(name, m)) {
         g_inImportHook = 1;
-        ((PFN_Run)ADDR_PYRUN)("import bcmpfix_mp\nbcmpfix_mp.GuardInfoPane()\n");
+        ((PFN_Run)ADDR_PYRUN)("import bcmpfix_mp\nbcmpfix_mp.OnImport()\n");
         g_inImportHook = 0;
     }
     return m;
@@ -117,5 +151,5 @@ void scripterr_install(void)
                       "no blocking Python debug console in windowed mode");
     if (g_cfg.mpScript)
         redirect_call(ADDR_CALL_IMPORTEX, (void *)hk_ImportEx, &o_ImportEx, ADDR_IMPORTEX,
-                      "guard mission menus at import (join race)");
+                      "script fixes at import (mission menus join race, game script fixes)");
 }

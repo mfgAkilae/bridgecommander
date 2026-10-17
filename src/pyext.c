@@ -135,6 +135,50 @@ static PyObject *__cdecl m_getenv(PyObject *self, PyObject *args)
 #define ADDR_PYINT_FROMLONG 0x0074C6E0
 typedef PyObject *(__cdecl *PFN_IntFromLong)(long);
 
+/* bcmpdll.rawsend(hex, ip, port, fresh): test mode only - send a raw UDP datagram (hex string)
+ * from the game's own socket (fresh=0) or from a new socket on the bind address (fresh=1);
+ * the attack tests of the test pilot use it to send malformed or forged packets */
+static PyObject *__cdecl m_rawsend(PyObject *self, PyObject *args)
+{
+    const char *hex = NULL, *ip = NULL;
+    int port = 0, fresh = 0, n = 0, r;
+    static char buf[2048];
+    struct sockaddr_in to;
+    SOCKET s;
+    (void)self;
+    if (!((PFN_ParseTuple)ADDR_PYARG_PARSETUPLE)(args, "ssii", &hex, &ip, &port, &fresh))
+        return NULL;
+    if (!g_cfg.testMode)
+        return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(-1);
+    while (hex[0] && hex[1] && n < (int)sizeof(buf)) {
+        unsigned v = 0;
+        sscanf(hex, "%2x", &v);
+        buf[n++] = (char)v;
+        hex += 2;
+    }
+    memset(&to, 0, sizeof(to));
+    to.sin_family = AF_INET;
+    to.sin_addr.s_addr = inet_addr(ip);
+    to.sin_port = htons((u_short)port);
+    if (!guard_encrypt_test(buf, n))
+        return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(-1);
+    s = fresh ? INVALID_SOCKET : net_game_socket();
+    if (s == INVALID_SOCKET) {
+        struct sockaddr_in a;
+        s = socket(AF_INET, SOCK_DGRAM, 0);
+        memset(&a, 0, sizeof(a));
+        a.sin_family = AF_INET;
+        a.sin_addr.s_addr = g_cfg.bindAddress[0] ? inet_addr(g_cfg.bindAddress) : INADDR_ANY;
+        bind(s, (struct sockaddr *)&a, sizeof(a));
+        r = sendto(s, buf, n, 0, (struct sockaddr *)&to, sizeof(to));
+        closesocket(s);
+    } else
+        r = net_sendto(s, buf, n, (struct sockaddr *)&to, sizeof(to));
+    logf("test: raw datagram of %d bytes to %s:%d (%s socket): %d", n, ip, port, fresh ? "new" : "game", r);
+    return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(r);
+}
+
+
 /* bcmpdll.ms(): QPC milliseconds since boot as an exact integer. Python floats are
  * computed with the x87 FPU in single precision after D3D init, so time.time() is
  * useless for fine timing; QPC is shared by all processes on the machine. */
@@ -400,6 +444,11 @@ static PyObject *__cdecl m_config(PyObject *self, PyObject *args)
         v = direct_enabled();
     else if (!lstrcmpiA(k, "FixConditionInRange"))
         v = g_cfg.fixConditionInRange;
+    else {
+        int sv;
+        if (script_key(k, &sv))
+            v = sv;
+    }
     return ((PFN_IntFromLong)ADDR_PYINT_FROMLONG)(v);
 }
 
@@ -423,6 +472,7 @@ static PyMethodDef g_methods[] = {
     {"tlogms", m_tlogms, 1, NULL},
     {"quit", m_quit, 1, NULL},
     {"getenv", m_getenv, 1, NULL},
+    {"rawsend", m_rawsend, 1, NULL},
     {"log", m_log, 1, NULL},
     {"write", m_write, 1, NULL},
     {"dlllog", m_dlllog, 1, NULL},

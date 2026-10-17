@@ -77,6 +77,8 @@ are game units; ships fly at about 4–6 units/s. Details: [`docs/measurements.m
 | Script error in windowed mode | game waits in a debug console | logged, game continues | v1.2 |
 | Ramming: both ships damaged when players collide | 3 of 10 | 21 of 24 | v1.0–v1.4 |
 | Ramming: an AI ship a client rams takes damage | 0 of 17 | 21 of 21 | v1.7.5 |
+| Malformed or forged UDP/GAME messages reach native handlers | accepted before ownership checks | rejected at the authenticated receive boundary | v2.0.0 |
+| Guaranteed messages expire or survive sequence wrap incorrectly | possible silent loss/stale queue copy | retained to ACK; stale wrap copies dropped | v2.0.0 |
 
 ## Installation
 
@@ -186,6 +188,9 @@ What bcmpfix does about it:
 | 18 | the owner reports its firing banks and which beams are on the target; the other computers fire exactly those banks and show a hit when the owner's beam hits (`PhaserHitAuthority`, v1.6.0); they start a reported bank at once, and the reports also go straight from player to player instead of only through the host (`DirectPhaserReports`, v1.7.0) |
 | 19 | the two reads are skipped when the pointer is empty (`FixRestartCrashes`, v1.7.4) |
 | 20 | the report keeps the ramming ship (`FixRammingDamage`, v1.7.5) |
+| 21 | UDP framing, endpoint identity, sender IDs, fragments and queue bounds are validated before decoded data reaches the game (`GuardNetwork`, v2.0.0) |
+| 22 | GAME messages are checked for direction, class, length and object ownership before relay or dispatch; host-only script messages cannot be forged (`ValidateGameMessages`, `HostOnlyScriptMessages`, v2.0.0) |
+| 23 | guaranteed messages remain queued until ACK, disconnect waits are bounded, sequence wrap retires stale copies and respawn lookup prefers the living ship (v2.0.0) |
 
 ## Verification
 

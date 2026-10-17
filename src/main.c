@@ -107,6 +107,10 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID res)
         }
         if (g_cfg.testMode || g_cfg.inputOnlyFocused)
             input_install();
+        if (!guard_install()) {
+            logf("SECURITY FATAL: required network guard hook or patch failed; refusing startup");
+            return FALSE;
+        }
         net_install();
         netfix_install();
         torpedo_install();
@@ -115,6 +119,7 @@ BOOL WINAPI DllMain(HINSTANCE h, DWORD reason, LPVOID res)
         relay_install();
         scripterr_install();
         join_install();
+        session_install();
         phaser_install();
     }
     return TRUE;

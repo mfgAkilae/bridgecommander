@@ -13,6 +13,7 @@ g_bInit = 0
 g_sRole = ''
 g_sName = 'Player'
 g_sJoin = '127.0.0.1'
+g_iAttack = -1
 g_iSpecies = 1
 g_iSystem = 1
 g_sAI = 'attack'
@@ -597,6 +598,7 @@ def InGame():
 	if not pGame:
 		return
 	InstallHandlers()
+	AttackOnce()
 	if GameOver():
 		return
 	pPlayer = pGame.GetPlayer()
@@ -1021,6 +1023,88 @@ def KickShip(pPlayer):
 	kNew.SetXYZ(kVel.GetX() + f * (kRight.GetX() - kFwd.GetX()), kVel.GetY() + f * (kRight.GetY() - kFwd.GetY()), kVel.GetZ() + f * (kRight.GetZ() - kFwd.GetZ()))
 	pPlayer.SetVelocity(kNew)
 	Log('X KICK %d %s %.1f' % (Now(), pPlayer.GetName(), fKick))
+
+def HexLE16(iValue):
+	return '%02x%02x' % (iValue & 255, (iValue >> 8) & 255)
+
+def HexLE32(iValue):
+	return '%02x%02x%02x%02x' % (iValue & 255, (iValue >> 8) & 255,
+		(iValue >> 16) & 255, (iValue >> 24) & 255)
+
+def AttackPacket(iSender, sBody):
+	iLength = 3 + len(sBody) / 2
+	return '%02x0132%s%s' % (iSender & 255, HexLE16(iLength), sBody)
+
+def AttackFragment(iSender, iSequence, iIndex, iTotal, sBody):
+	sFragment = '%02x' % (iIndex & 255)
+	if iIndex == 0:
+		sFragment = sFragment + ('%02x' % (iTotal & 255))
+	iLength = 5 + len(sFragment) / 2 + len(sBody) / 2
+	return '%02x0132%s%s%s%s' % (iSender & 255,
+		HexLE16(0xa000 | iLength), HexLE16(iSequence), sFragment, sBody)
+
+def AttackOnce():
+	# BCMP_ATTACK=1: one client injects malformed transport frames plus validly
+	# framed forged GAME messages after it has joined. The host must remain in
+	# game and log every rejection; rawsend is available only in DLL test mode.
+	global g_iAttack
+	if g_iAttack < 0:
+		g_iAttack = string.atoi(Env('BCMP_ATTACK', '0'))
+	if g_iAttack != 1 or g_sRole != 'client' or InState() < 20.0:
+		return
+	g_iAttack = 2
+	import bcmpdll
+	pNet = App.g_kUtopiaModule.GetNetwork()
+	pGame = App.Game_GetCurrentGame()
+	pPlayer = pGame and pGame.GetPlayer()
+	if not pNet or not pPlayer:
+		Log('X ATTACK %d skipped no network/player' % Now())
+		return
+	iMe = pPlayer.GetNetPlayerID()
+	iHost = pNet.GetHostID()
+	# Shape/framing failures from an unbound endpoint.
+	bcmpdll.rawsend('', g_sJoin, 22101, 1)
+	bcmpdll.rawsend('ff', g_sJoin, 22101, 1)
+	bcmpdll.rawsend('ffff02', g_sJoin, 22101, 1)
+	bcmpdll.rawsend('ff01320000', g_sJoin, 22101, 1)
+	bcmpdll.rawsend('ff0140', g_sJoin, 22101, 1)
+	# A syntactically valid Connect with a name longer than PlayerNameMaxLength.
+	sName = ''
+	i = 0
+	while i < 40:
+		sName = sName + '4100'
+		i = i + 1
+	sConnect = '0000000078563412' + sName + '0000'
+	bcmpdll.rawsend('ff0103' + HexLE16(3 + len(sConnect) / 2) + sConnect,
+		g_sJoin, 22101, 1)
+	# Exercise the GameSpy n+1 allocation at the exact 512-byte receive limit.
+	bcmpdll.rawsend('5c' + ('41' * 511), g_sJoin, 22101, 1)
+	# Correct endpoint, forged transport sender and forbidden GAME/script messages.
+	bcmpdll.rawsend(AttackPacket(iHost, '0e00000000'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '38'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '2c' + HexLE32(iHost) + '0000'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '2c' + HexLE32(iMe) + 'ff7f'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '41' + HexLE32(iHost) + '07'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '07' + ('00' * 24)), g_sJoin, 22101, 0)
+	# Generic Event/Create are not safely attributable to a client.
+	bcmpdll.rawsend(AttackPacket(iMe, '0c'), g_sJoin, 22101, 0)
+	bcmpdll.rawsend(AttackPacket(iMe, '02'), g_sJoin, 22101, 0)
+	# STATE Power tails are pairs of subsystem index and power byte. 255 cannot
+	# name a stock ship subsystem and must be rejected before the native reader.
+	sState = '07' + HexLE32(pPlayer.GetObjID()) + '00000000' + '80ff00'
+	bcmpdll.rawsend(AttackPacket(iMe, sState), g_sJoin, 22101, 0)
+	# A syntactically valid self-collision with FLT_MAX force must be rejected by
+	# the mass-normalized collision-force cap before the native damage handler.
+	iShip = pPlayer.GetObjID()
+	sCollision = ('15' + HexLE32(0x8124) + HexLE32(0x800050) +
+		HexLE32(iShip) + HexLE32(iShip) + '01' + '00000000' + 'ffff7f7f')
+	bcmpdll.rawsend(AttackPacket(iMe, sCollision), g_sJoin, 22101, 0)
+	# The first fragment is accepted into the reassembly window; replaying the
+	# same sequence/index must be rejected as a duplicate.
+	sFragment = AttackFragment(iMe, 0, 0, 2, '00')
+	bcmpdll.rawsend(sFragment, g_sJoin, 22101, 0)
+	bcmpdll.rawsend(sFragment, g_sJoin, 22101, 0)
+	Log('X ATTACK %d sent sender=%d host=%d' % (Now(), iMe, iHost))
 
 g_iInfoPaneTest = -1
 

@@ -42,7 +42,11 @@ FIXES_OFF = {'StateUpdateHz': 0, 'AlwaysAbsolutePosition': 0, 'FixDeltaBase': 0,
              'TrackingArc': 0, 'UpdateDistanceScalePercent': 100, 'StateUpdateIntervalMs': 100, 'ResendIntervalMs': 1000,
              'TorpedoHitAuthority': 0, 'LatencyCompensation': 0, 'MaxLatencyCompensationMs': 0,
              'HostRelayReceivedState': 0, 'NoScriptErrorConsole': 0, 'FixGhostShip': 0, 'FixDedicatedObjectIds': 0,
-             'FixConditionInRange': 0, 'FixRestartCrashes': 0, 'FixRammingDamage': 0, 'SnapNewShips': 0, 'TorpedoLatencyCompensation': 0,
+             'FixConditionInRange': 0, 'FixRestartCrashes': 0, 'FixRammingDamage': 0, 'FixReliableExpiry': 0, 'FixDisconnectWait': 0, 'FixSequenceWrap': 0,
+             'FixPlayerShipLookup': 0, 'GuardNetwork': 0, 'ValidateGameMessages': 0,
+             'HostOnlyScriptMessages': 0, 'ChatMaxLength': 255, 'PlayerNameMaxLength': 32,
+             'RejectDeadShipFire': 0, 'CollisionMaxSpecificForce': 128,
+             'SnapNewShips': 0, 'TorpedoLatencyCompensation': 0,
              'PredictTorpedoHits': 0, 'PhaserHitAuthority': 0, 'PhaserSync': 0, 'DirectPhaserReports': 0,
              'ScriptLayer': 0, 'TimerResolution1ms': 0, 'ClockFromProcessStart': 0, 'MaxFPS': 0,
              'InputOnlyWhenFocused': 0}
@@ -164,6 +168,8 @@ def main():
     ap.add_argument('--test-set', action='append', default=[], help='extra [Test] line, e.g. PythonTickDelayMs=1500')
     ap.add_argument('--raise-once', action='store_true', help='clients raise once in a script event handler')
     ap.add_argument('--test-infopane', action='store_true', help='call RebuildInfoPane once with no info pane')
+    ap.add_argument('--attack', action='store_true',
+                    help='client injects malformed/forged UDP and GAME messages once in game')
     ap.add_argument('--kick', default='', help='AT:SPEED[:EVERY] - every player kicks its own ship sideways/backwards (player i at AT+4*i s), e.g. 30:20:30')
     ap.add_argument('--damage', default='', help='AT:FRACTION[:hull[:EVERY]] - host damages its impulse engines (or the hull of all other ships) once '
                          'or every EVERY s, e.g. 60:0.2 or 40:0.05:hull:30')
@@ -225,6 +231,7 @@ def main():
             'BCMP_SEED': str(seed),
             'BCMP_RAISE_ONCE': '1' if a.raise_once and role != 'host' else '0',
             'BCMP_TEST_INFOPANE': '1' if a.test_infopane else '0',
+            'BCMP_ATTACK': '1' if a.attack and role == 'client' else '0',
             'BCMP_KICK_AT': a.kick.split(':')[0] if a.kick else '-1',
             'BCMP_KICK': a.kick.split(':')[1] if ':' in a.kick else '20',
             'BCMP_KICK_EVERY': a.kick.split(':')[2] if a.kick.count(':') >= 2 else '0',
@@ -274,8 +281,31 @@ def main():
                     f.write(r.stdout + r.stderr + '\n----\n')
                     time.sleep(0.5)
             p.kill()
+            try:
+                p.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                pass
     stop_mem.set()
-    print('done', [p.returncode for p in procs])
+    results = [p.returncode for p in procs]
+    print('done', results)
+    failures = []
+    if any(code != 0 for code in results):
+        failures.append('process return codes %r' % results)
+    if a.attack:
+        checks = [
+            ('tlog_client.txt', 'X ATTACK ', 'attack script did not run'),
+            ('tlog_client.txt', ' sent sender=', 'attack injection did not finish'),
+            ('dll_host.log', 'network guard: rejected', 'transport guard rejected nothing'),
+            ('dll_host.log', 'game guard: rejected', 'GAME guard rejected nothing'),
+            ('dll_host.log', 'opcode=0x15 len=26', 'forged collision was not rejected'),
+        ]
+        for filename, needle, failure in checks:
+            path = os.path.join(out, filename)
+            text = open(path, 'r', errors='replace').read() if os.path.isfile(path) else ''
+            if needle not in text:
+                failures.append('%s (%s)' % (failure, filename))
+    if failures:
+        raise SystemExit('verification failed: ' + '; '.join(failures))
 
 
 if __name__ == '__main__':

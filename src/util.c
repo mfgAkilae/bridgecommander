@@ -18,6 +18,23 @@ double now_sec(void)
     return (double)(c.QuadPart - g_qpc0.QuadPart) / (double)g_qpf.QuadPart;
 }
 
+/* [Fixes] keys that only the script layer reads (bcmpdll.config), default on */
+ScriptKey g_scriptKeys[] = {
+    {"FixGameScripts", 1},
+    {NULL, 0},
+};
+
+int script_key(const char *key, int *value)
+{
+    int i;
+    for (i = 0; g_scriptKeys[i].key; i++)
+        if (!lstrcmpiA(key, g_scriptKeys[i].key)) {
+            *value = g_scriptKeys[i].value;
+            return 1;
+        }
+    return 0;
+}
+
 static int ini_int(const char *ini, const char *sec, const char *key, int def)
 {
     return (int)GetPrivateProfileIntA(sec, key, def, ini);
@@ -63,6 +80,34 @@ void config_load(void)
     g_cfg.fixConditionInRange = ini_int(ini, "Fixes", "FixConditionInRange", 1);
     g_cfg.fixRestartCrashes = ini_int(ini, "Fixes", "FixRestartCrashes", 1);
     g_cfg.fixRammingDamage = ini_int(ini, "Fixes", "FixRammingDamage", 1);
+    g_cfg.fixReliableExpiry = ini_int(ini, "Fixes", "FixReliableExpiry", 1);
+    g_cfg.fixDisconnectWait = ini_int(ini, "Fixes", "FixDisconnectWait", 1);
+    g_cfg.fixSequenceWrap = ini_int(ini, "Fixes", "FixSequenceWrap", 1);
+    g_cfg.fixPlayerShipLookup = ini_int(ini, "Fixes", "FixPlayerShipLookup", 1);
+    g_cfg.guardNetwork = ini_int(ini, "Fixes", "GuardNetwork", 1);
+    g_cfg.validateGameMessages = ini_int(ini, "Fixes", "ValidateGameMessages", 1);
+    g_cfg.hostOnlyScriptMessages = ini_int(ini, "Fixes", "HostOnlyScriptMessages", 1);
+    g_cfg.chatMaxLength = ini_int(ini, "Fixes", "ChatMaxLength", 255);
+    if (g_cfg.chatMaxLength < 0)
+        g_cfg.chatMaxLength = 0;
+    if (g_cfg.chatMaxLength > 4096)
+        g_cfg.chatMaxLength = 4096;
+    g_cfg.playerNameMaxLength = ini_int(ini, "Fixes", "PlayerNameMaxLength", 32);
+    if (g_cfg.playerNameMaxLength < 1)
+        g_cfg.playerNameMaxLength = 1;
+    if (g_cfg.playerNameMaxLength > 120)
+        g_cfg.playerNameMaxLength = 120;
+    g_cfg.rejectDeadShipFire = ini_int(ini, "Fixes", "RejectDeadShipFire", 1);
+    g_cfg.collisionMaxSpecificForce = ini_int(ini, "Fixes", "CollisionMaxSpecificForce", 128);
+    if (g_cfg.collisionMaxSpecificForce < 1)
+        g_cfg.collisionMaxSpecificForce = 1;
+    if (g_cfg.collisionMaxSpecificForce > 100000)
+        g_cfg.collisionMaxSpecificForce = 100000;
+    /* GAME ownership is meaningful only after the transport endpoint authenticated
+     * the outer sender.  Do not permit an insecure combination of otherwise
+     * independent-looking switches. */
+    if ((g_cfg.validateGameMessages || g_cfg.hostOnlyScriptMessages) && !g_cfg.guardNetwork)
+        g_cfg.guardNetwork = 1;
     g_cfg.snapNewShips = ini_int(ini, "Fixes", "SnapNewShips", 1);
     g_cfg.torpedoLead = ini_int(ini, "Fixes", "TorpedoLatencyCompensation", 1);
     g_cfg.predictHits = ini_int(ini, "Fixes", "PredictTorpedoHits", 1);
@@ -77,6 +122,11 @@ void config_load(void)
     g_cfg.qpcRebase = ini_int(ini, "Fixes", "ClockFromProcessStart", 1);
     g_cfg.maxFps = ini_int(ini, "Fixes", "MaxFPS", 0);
     g_cfg.inputOnlyFocused = ini_int(ini, "Fixes", "InputOnlyWhenFocused", 0);
+    {
+        int i;
+        for (i = 0; g_scriptKeys[i].key; i++)
+            g_scriptKeys[i].value = ini_int(ini, "Fixes", g_scriptKeys[i].key, g_scriptKeys[i].value);
+    }
 
     g_cfg.testMode = ini_int(ini, "Test", "Enabled", 0);
     g_cfg.inputIsolation = ini_int(ini, "Test", "InputIsolation", 1);
@@ -235,7 +285,10 @@ int patch_bytes(DWORD addr, const char *expectHex, const char *replHex, const ch
         logf("PATCH %s @%08lx: bytes differ, NOT applied (unknown exe version?)", what, addr);
         return 0;
     }
-    mem_write((void *)addr, rep, nr);
+    if (!mem_write((void *)addr, rep, nr)) {
+        logf("PATCH %s @%08lx: write failed, NOT applied", what, addr);
+        return 0;
+    }
     logf("PATCH %s @%08lx: applied", what, addr);
     return 1;
 }
@@ -257,7 +310,10 @@ int redirect_call(DWORD callsite, void *newfn, void **orig, DWORD expectTarget, 
     if (orig)
         *orig = (void *)target;
     rel = (LONG)((DWORD)newfn - (callsite + 5));
-    mem_write(p + 1, &rel, 4);
+    if (!mem_write(p + 1, &rel, 4)) {
+        logf("HOOK %s @%08lx: write failed, NOT applied", what, callsite);
+        return 0;
+    }
     logf("HOOK %s @%08lx: applied", what, callsite);
     return 1;
 }

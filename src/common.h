@@ -40,6 +40,17 @@ typedef struct Config {
     int fixConditionInRange; /* script: ConditionInRange registers its group handlers once (issue #27) */
     int fixRestartCrashes;  /* two original-game crashes when a mission restarts (join.c) */
     int fixRammingDamage;   /* a client's collision report keeps its ship as the source (join.c) */
+    int fixReliableExpiry;  /* guaranteed messages are kept until acknowledged (session.c) */
+    int fixDisconnectWait;  /* leaving a game waits at most 2 s for the host (session.c) */
+    int fixSequenceWrap;    /* queued copies are dropped across the sequence wrap (session.c) */
+    int fixPlayerShipLookup; /* GetShipFromPlayerID prefers the living ship (session.c) */
+    int guardNetwork;      /* validate UDP transport framing and bind senders to endpoints (guard.c) */
+    int validateGameMessages; /* validate native GAME messages before dispatch (guard.c) */
+    int hostOnlyScriptMessages; /* reject forged host-only script messages (guard.c) */
+    int chatMaxLength;     /* maximum accepted CHAT/TEAM_CHAT payload length */
+    int playerNameMaxLength; /* maximum accepted transport player-name length */
+    int rejectDeadShipFire; /* reject remote fire from destroyed ships on the host */
+    int collisionMaxSpecificForce; /* collision force / destination mass / point cap */
     int replayAnyShip;      /* test switch: a replayed torpedo may hit any ship, not only the reported one */
     int predictAnyHit;      /* test switch: PredictTorpedoHits also for ships the torpedo was not fired at */
     int phaserOwnerTarget;  /* test switch: remote banks the owner fires aim at the owner's target (issue #30) */
@@ -71,6 +82,12 @@ typedef struct Config {
 } Config;
 
 extern Config g_cfg;
+typedef struct ScriptKey {
+    const char *key;
+    int value;
+} ScriptKey;
+extern ScriptKey g_scriptKeys[];
+int script_key(const char *key, int *value);
 extern HMODULE g_self;
 extern char g_gameDir[MAX_PATH];
 
@@ -100,6 +117,13 @@ int iat_hook(HMODULE mod, const char *dll, const char *name, WORD ordinal, void 
 void input_install(void);
 HRESULT input_wrap_dinput(void *pDI);
 void net_install(void);
+int guard_install(void);
+int guard_datagram(SOCKET s, char *buf, int len, const struct sockaddr *from, int fromlen);
+void guard_note_receive(SOCKET s, const char *buf, int len,
+                        const struct sockaddr *from, int fromlen);
+int guard_note_send(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen);
+int guard_encrypt_test(char *buf, int len);
+void guard_forget_socket(SOCKET s);
 void netfix_install(void);
 int pyext_init(void);
 void torpedo_install(void);
@@ -135,11 +159,13 @@ int velo_target(BYTE *ai, float *target, float *dir);
 int velo_knocked(BYTE *ai, float proxySpeed);
 void scripterr_install(void);
 void join_install(void);
+void session_install(void);
 void phaser_install(void);
 void phaser_frame(int pythonReady);
 long tlog_ms(void);
 void join_frame(void);
 int net_sendto(SOCKET s, const char *buf, int len, const struct sockaddr *to, int tolen);
+SOCKET net_game_socket(void);
 int direct_enabled(void);
 void direct_init(void);
 void direct_set_role(int isHost, int hostDirect);

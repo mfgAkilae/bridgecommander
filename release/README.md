@@ -92,12 +92,35 @@ Since v1.7.3 the host also reports the phaser banks of the ships its AI flies, f
 
 Since v1.7.4 a bank on the other screens also aims at the target and point its owner's bank aims at. A weapon system moves a bank to its next target when the current one leaves the bank's arc or range; the other computers kept the old target and could fire at a ship the shooter did not fire at (AI beams missing on another screen: 0.46 % → 0.02 %).
 
-### 4. Network and timing
+### 4. Network protocol security
+
+- **Authenticated transport boundary:** UDP frames are checked for shape, size,
+  transport type, sequence/fragment consistency and sender identity before the
+  decoded Buffer reaches the game's parser. A sender is bound to its source IP,
+  source port and connection UID (`GuardNetwork=1`).
+- **GAME-message validation:** Native and script messages are checked before relay
+  or dispatch for their direction, wire class, exact length and Object ownership.
+  Mission setup, score, end/restart and team-score script opcodes are host-only;
+  chat and team changes are bound to the authenticated sender.
+- **Collision reports:** Client collision messages may affect the sender's own Ship
+  or a nearby AI Ship through the existing v1.7.5 ramming path, but not another
+  player's Ship. Extreme Force is rejected using a destination-mass/contact-point
+  limit (`CollisionMaxSpecificForce=128`).
+- **Fail closed:** The game does not continue into multiplayer when a required
+  Security Hook or Safety Patch cannot be installed. The exact failure is written
+  to `bcmpfix.log`.
+
+`ValidateGameMessages` and `HostOnlyScriptMessages` require authenticated sender
+identity and therefore implicitly enable `GuardNetwork`. A v2.0.0 host was tested
+with an original unmodified client; all players should still update so every peer
+also rejects hostile traffic locally.
+
+### 5. Network and timing
 
 - **Resending lost packets:** Guaranteed messages (firing, cloaking, deaths, game events) arrive in a fixed order. A lost packet used to hold up all following messages for at least 1 s. Now the resend happens after 0.3 s.
 - **Game clock:** The game clock was computed from the time since Windows started and stored as a 32-bit float. After days of uptime, frame timing became inaccurate by up to ±15 ms. Windows Fast Startup does not reset this time on shutdown. Now the clock counts from program start.
 
-### 5. Joining and freezes
+### 6. Joining and freezes
 
 - **Joining a running game:** If a player's ship arrived while you were still joining, the game's own mission script failed. In windowed mode the game then froze. bcmpfix skips the failing step until the game is ready for it.
 - **Invisible ship after joining:** If another player spawned a ship while you were joining, that ship could stay invisible on your screen for the whole game. bcmpfix shows it when the host sends it again during your join.

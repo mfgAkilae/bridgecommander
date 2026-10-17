@@ -17,7 +17,7 @@ RUNS = os.path.join(SBX, 'runs')
 TOOLS = r'C:\bcsrc\tools'
 
 
-def sync_game(status):
+def sync_game(status, require_current=False):
     """Copy new or changed files from the mapped game folder, then the overlay."""
     n = 0
     for root, dirs, files in os.walk(SRC):
@@ -54,6 +54,23 @@ def sync_game(status):
                         os.remove(pyc)
                 except OSError:
                     pass
+    # The mapped game is the stable stock fixture. Overlay the artifacts from
+    # this checkout only inside the disposable sandbox so a "current" run
+    # actually exercises the just-built DLL and current test scripts.
+    current_dir = os.path.join(TOOLS, 'current')
+    current = [
+        (os.path.join(current_dir, 'dinput.dll'), os.path.join(GAME, 'dinput.dll')),
+        (os.path.join(current_dir, 'bcmpfix_mp.py'), os.path.join(GAME, 'scripts', 'bcmpfix_mp.py')),
+        (os.path.join(TOOLS, 'game_scripts', 'Local.py'), os.path.join(GAME, 'scripts', 'Local.py')),
+        (os.path.join(TOOLS, 'game_scripts', 'bcmptest.py'), os.path.join(GAME, 'scripts', 'bcmptest.py')),
+    ]
+    for src, dst in current:
+        if not os.path.isfile(src):
+            if require_current:
+                raise RuntimeError('required current sandbox input missing: %s' % src)
+            continue
+        shutil.copy2(src, dst)
+        n += 1
     return n
 
 
@@ -101,7 +118,10 @@ def run_job(path, status):
     status('job %s start %s' % (name, job))
     if job.get('steps'):
         return run_steps(job, status)
-    status('synced %d files' % sync_game(status))
+    variants = job.get('variant', [])
+    require_current = job.get('fixes', 'off') != 'off' or any(
+        kv.endswith('=current') for kv in variants)
+    status('synced %d files' % sync_game(status, require_current))
     args = [sys.executable, '-I', os.path.join(TOOLS, 'mptest.py'), name]
     for k in ('seconds', 'fixes', 'rate', 'latency', 'jitter', 'loss', 'species', 'clients'):
         if k in job:
@@ -134,6 +154,8 @@ def run_job(path, status):
         args.append('--raise-once')
     if job.get('test_infopane'):
         args.append('--test-infopane')
+    if job.get('attack'):
+        args.append('--attack')
     if job.get('damage'):
         args += ['--damage', job['damage']]
     if job.get('kick'):
