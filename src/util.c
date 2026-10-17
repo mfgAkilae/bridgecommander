@@ -95,6 +95,7 @@ void config_load(void)
     g_cfg.pythonTickDelay = ini_int(ini, "Test", "PythonTickDelayMs", 6000) / 1000.0;
     g_cfg.statsIntervalSec = ini_int(ini, "Debug", "NetStatsSec", 0);
     g_cfg.phaserOwnerTarget = ini_int(ini, "Test", "PhaserOwnerTarget", 1);
+    g_cfg.injectProxyVelSec = ini_int(ini, "Test", "InjectProxyVelocitySec", 0);
     g_cfg.predictAnyHit = ini_int(ini, "Test", "PredictAnyTorpedoHit", 0);
     g_cfg.replayAnyShip = ini_int(ini, "Test", "ReplayAnyShip", 0);
     g_cfg.traceSec = ini_int(ini, "Debug", "TraceStateSec", ini_int(ini, "Test", "TraceStateSec", 0));

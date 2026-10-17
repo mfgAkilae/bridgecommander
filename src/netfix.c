@@ -231,6 +231,34 @@ static void snap_new(BYTE *ai, void *ship)
         ((PFN_Align)ADDR_ALIGN_TO_VECTORS)(ship, 0, f, u);
 }
 
+/* A network copy pressed against an immovable object (the starbase, which the starbase mission
+ * makes immune to collisions) by the position correction gets a collision response every frame,
+ * and its physics velocity swung up with alternating sign: 3 to 149000 units/s within 1.2 s in one
+ * test. The position stays right (the correction sets it), but the next collision of that copy had
+ * a force of 4e21 and then NaN, and the host applied the NaN damage to its own ship. A copy whose
+ * velocity is beyond 60 units/s and far beyond the speed its owner reports (NetworkAI +0x54), or
+ * NaN, gets its velocity reset; the engines and the correction rebuild it in the next frames. */
+#define ADDR_SET_VELOCITY 0x005A04C0 /* PhysicsObjectClass::SetVelocity(const float *v), thiscall */
+#define PROXY_MAX_SPEED 60.0f
+typedef void(__fastcall *PFN_SetVel)(void *obj, void *edx, const float *v);
+static unsigned long g_velReset;
+
+static void limit_proxy_velocity(BYTE *ai, void *ship)
+{
+    float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
+    float s2 = pv[0] * pv[0] + pv[1] * pv[1] + pv[2] * pv[2];
+    float lim = 3.0f * ABSF(*(float *)(ai + 0x54)) + 20.0f;
+    static const float zero[3] = {0.0f, 0.0f, 0.0f};
+    if (lim < PROXY_MAX_SPEED)
+        lim = PROXY_MAX_SPEED;
+    if (s2 <= lim * lim)
+        return; /* also false for NaN */
+    if (g_velReset++ < 10)
+        logf("network copy id=%lu: physics velocity %.0f units/s reset (collision feedback)", *(DWORD *)((BYTE *)ship + 4),
+             s2 == s2 ? (float)sqrt(s2) : -1.0f);
+    ((PFN_SetVel)ADDR_SET_VELOCITY)(ship, 0, zero);
+}
+
 static int knocked(BYTE *ai, void *ship)
 {
     float *pv = ((PFN_GetPos)ADDR_GET_VELOCITY_NF)(ship, 0);
@@ -241,6 +269,18 @@ static void __fastcall hk_NetAICorrect(void *self, void *edx, void *ship, float 
 {
     (void)edx;
     g_veloDirValid = g_feedForward = 0;
+    if (ship && g_cfg.testMode && g_cfg.injectProxyVelSec > 0) {
+        /* test of the guard below: one copy gets an absurd velocity once */
+        static int s_injected;
+        if (!s_injected && now_sec() >= g_cfg.injectProxyVelSec) {
+            static const float big[3] = {0.0f, 5000.0f, 0.0f};
+            s_injected = 1;
+            ((PFN_SetVel)ADDR_SET_VELOCITY)(ship, 0, big);
+            logf("test: network copy id=%lu got a velocity of 5000 units/s", *(DWORD *)((BYTE *)ship + 4));
+        }
+    }
+    if (ship && g_cfg.smoothCorrection)
+        limit_proxy_velocity((BYTE *)self, ship);
     if (ship && g_cfg.snapNewShips && lead_take_snap(*(DWORD *)((BYTE *)ship + 4))) {
         snap_new((BYTE *)self, ship);
         return;

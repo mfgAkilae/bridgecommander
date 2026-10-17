@@ -43,6 +43,7 @@ typedef struct Config {
     int replayAnyShip;      /* test switch: a replayed torpedo may hit any ship, not only the reported one */
     int predictAnyHit;      /* test switch: PredictTorpedoHits also for ships the torpedo was not fired at */
     int phaserOwnerTarget;  /* test switch: remote banks the owner fires aim at the owner's target (issue #30) */
+    int injectProxyVelSec;  /* test: N s after start one network copy gets a velocity of 5000 units/s once */
     int snapNewShips;       /* a new remote ship starts at its first received position, not the create message's */
     int mpScript;           /* run scripts/bcmpfix_mp.py (needed by the two options above) */
     int timerResolution1ms; /* timeBeginPeriod(1) */

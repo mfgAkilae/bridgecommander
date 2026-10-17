@@ -79,10 +79,10 @@ col.c-problem { width: 44%; }
   <header>
     <div class="eyebrow">Star Trek: Bridge Commander 1.1 · multiplayer</div>
     <h1>bcmpfix: what changed, before and after</h1>
-    <p class="lede">Every fix from v1.0.0 to v1.7.4, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
+    <p class="lede">Every fix from v1.0.0 to v1.7.5, measured in Windows Sandbox with simulated network conditions (mostly 60 ms ±20 ms latency per direction, 1 % packet loss). "Before" is the original game or the version before the fix. Distances are game units; ships fly at about 4–6 units/s.</p>
     <div class="meta">
       <a href="https://github.com/mfgAkilae/bridgecommander">Repository</a>
-      <a href="https://github.com/mfgAkilae/bridgecommander/releases/tag/v1.7.4">Release v1.7.4</a>
+      <a href="https://github.com/mfgAkilae/bridgecommander/releases/tag/v1.7.5">Release v1.7.5</a>
       <a href="https://github.com/mfgAkilae/bridgecommander/blob/main/docs/measurements.md">Full measurements</a>
     </div>
   </header>
@@ -154,7 +154,7 @@ col.c-problem { width: 44%; }
         <tr><td>Freezes with ten players (event handlers doubling)</td><td class="num before">up to 37 s, 98667 handlers</td><td class="num after">none, ≈400</td><td class="ver"><a href="https://github.com/mfgAkilae/bridgecommander/issues/27">v1.7.2 #27</a></td></tr>
         <tr><td>Script error in windowed mode</td><td class="num before">game waits in a debug console</td><td class="num after">logged, game continues</td><td class="ver">v1.2</td></tr>
         <tr><td>Ramming: both ships damaged when players collide</td><td class="num before">3 of 10</td><td class="num after">21 of 24</td><td class="ver">v1.0–v1.4</td></tr>
-        <tr><td>Ramming: an AI ship a client rams takes damage</td><td class="num before">0 of 17</td><td class="num after">21 of 21</td><td class="ver">main</td></tr>
+        <tr><td>Ramming: an AI ship a client rams takes damage</td><td class="num before">0 of 17</td><td class="num after">21 of 21</td><td class="ver">v1.7.5</td></tr>
       </tbody>
     </table></div>
   </section>

@@ -1348,7 +1348,7 @@ stopped with "Nothing was changed", v1.7.3 stayed complete, and the update worke
 was free. No crashes and no script errors of bcmpfix (the starbase mission's own `KeyError` is
 logged on every client).
 
-## Ramming (after v1.7.4, `FixRammingDamage`)
+## Ramming (v1.7.5, `FixRammingDamage`)
 
 The test pilot rams (`mptest.py --ram 0.8 --ram-nofire`): 80 % of its manoeuvres are runs at full
 impulse at its target's intercept point until the ships collide, and no ship fires, so hull losses
@@ -1402,3 +1402,55 @@ the pilot logged these collisions without a source on the owner's machine; the c
 contact are therefore only complete with the fix (the damage counts come from the host's hull
 values and are not affected). Test telemetry of the DLL: `CR` lines for every collision report the
 host receives (with the serialized event), `CA` for every report it applies.
+
+## Network copies pressed against the starbase (v1.7.5)
+
+In one starbase-mission run of the first v1.7.5 release check a client's ship touched the starbase
+on the host's screen. The position correction held the host's copy of it against the starbase, and
+the game's collision response pushed the copy away in every frame: its physics velocity swung up
+with alternating sign, from 3 to 149 000 units/s within 1.2 s. The copy's position stayed right
+(the correction sets it), and the owner's ship was unaffected. Seven seconds later the ship was
+destroyed by a torpedo, its wreck touched an asteroid with a force of 4·10²¹ and then the host's
+ship with a force of NaN: the host applied NaN damage to its own ship, which exploded, and its
+position became NaN on the host and on a client. Seen once in about 40 starbase-mission runs with
+v1.7.4 and v1.7.5 code (none of them with the original game); three more runs did not show it.
+
+Guard (`src/netfix.c`, part of `SmoothCorrection`): a network copy whose physics velocity is beyond
+60 units/s and beyond three times the speed its owner reports plus 20, or NaN, gets its velocity set
+to zero; its engines and the correction rebuild it within frames. A test switch (`[Test]
+InjectProxyVelocitySec`) gave one copy 5000 units/s: the guard reset it in the next frame, and the
+telemetry never saw more than 6.5 units/s. In the kick test (ships pushed at 20 units/s), a ramming
+run and three starbase runs it never triggered.
+
+## v1.7.5 release check
+
+Exact release build (`dinput.dll` sha256 7a2a14f9…), default settings. Mean / 95th percentile,
+backward steps:
+
+| Run | Host ship seen by clients | Client ships seen by the host | Client ships seen by other clients | Torpedo hits seen by all clients |
+|---|---|---|---|---|
+| 2 players, 60 ms ±20 ms, 1 % loss | 0.06 / 0.13, 0.0 % | 0.04 / 0.09, 0.1 % | – | 12 of 12 |
+| 2 players, 150 ms ±50 ms, 5 % loss | 0.10 / 0.21, 0.0 % | 0.06 / 0.13, 0.0 % | – | 6 of 6 |
+| 6 players, 60 ms ±20 ms, 1 % loss | 0.05 / 0.10, 0.0 % | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 57 of 57 |
+| 6 players, all hulls at 5 % after 40 s | 0.06 / 0.11, 0.0 % | 0.04 / 0.09, 0.0 % | 0.07 / 0.14, 0.0 % | 68 of 68 |
+| 5 players against 5 AI ships | 0.04 / 0.12, 0.0 % (with the AI ships) | 0.05 / 0.10, 0.1 % | 0.07 / 0.15, 0.1 % | 280 of 281 |
+| dedicated server + 10 clients | – | 0.06 / 0.14, 0.0 % | 0.08 / 0.18, 0.0 % | 166 of 169 |
+| starbase mission, 6 players | 0.02 / 0.08, 0.0 % (with the starbase) | 0.04 / 0.09, 0.1 % | 0.07 / 0.15, 0.3 % | 215 of 216 |
+| starbase mission, forced damage, five restarts | 0.05 / 0.22, 0.0 % | 0.06 / 0.18, 0.0 % | 0.11 / 0.38, 0.0 % | 159 of 160 |
+
+Phasers: beams shown by the other peers 99.5–100 %; in the AI run 2375 of 2376 of the AI ships' beams
+and 701 of 704 of the players'. Bank firings 99.1–99.9 %, start delay median 73–82 ms. Ramming (no
+weapons): players against players 9 contacts, both ships damaged in 7, one ship in 2 (grazes only
+one owner saw); with AI ships 29 contacts, both ships damaged in 26; the copies were at most 1.8
+units off after an impact. Ships that appeared on a peer were at most 0.3–0.8 units off 0.25 s
+later. The starbase mission restarted five times through the end screen without a crash. The
+velocity guard never triggered, and no position was NaN. Lowest frame rate over 5 s: 19.2
+(dedicated run, eleven instances), 37–238 elsewhere; no instance stalled; at most 413 event
+handlers per instance, 868 on the host that flies five AI ships. Mixed game (v1.7.5 host; v1.7.4,
+v1.7.3 and two v1.7.5 clients; one original client with the script error console off): among the
+v1.7.x players phaser beams 100 %, bank firings 99.1–100 %, torpedo hits 100 %, positions
+0.05–0.10; the original client showed 33 of 52 of the host's torpedo hits, and the others saw it
+0.31 units off. Kick test: peak error median 3.4, 90th percentile 4.5, max 5.4. Join test: every
+client saw every ship. Installer: update from v1.7.4 with kept settings, fresh install over another
+mod's `dinput.dll` and uninstall. No crashes, no script errors of bcmpfix (the starbase mission's
+own `KeyError` is logged on every client).

@@ -25,9 +25,12 @@ def load(path):
         if p[0] == 'S' and len(p) >= 15:
             t = int(p[1])
             name, local = p[3], int(p[6])
-            pos = tuple(float(x) for x in p[7:10])
-            vel = tuple(float(x) for x in p[10:13])
-            hull = float(p[13])
+            try:
+                pos = tuple(float(x) for x in p[7:10])
+                vel = tuple(float(x) for x in p[10:13])
+                hull = float(p[13])
+            except ValueError:
+                continue  # NaN printed by the game's C runtime as -1.#J (a wreck after a broken collision)
             ships.setdefault(name, []).append((t, pos, vel, hull, local))
         elif p[0] == 'H':
             hits.append((int(p[1]), p[2], ' '.join(p[3:])))
